@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/BuildingBlocks/">
+    <Project Path="src/BuildingBlocks/Acme.Service.BuildingBlocks.Persistence/Acme.Service.BuildingBlocks.Persistence.csproj" />
+    <Project Path="src/BuildingBlocks/Acme.Service.BuildingBlocks.Web/Acme.Service.BuildingBlocks.Web.csproj" />
+    <Project Path="src/BuildingBlocks/Acme.Service.BuildingBlocks/Acme.Service.BuildingBlocks.csproj" />
+  </Folder>
+  <Folder Name="/src/Host/">
+    <Project Path="src/Host/Acme.Service.Host/Acme.Service.Host.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Acme.Service.BuildingBlocks.Tests/Acme.Service.BuildingBlocks.Tests.csproj" />
+    <Project Path="tests/Acme.Service.Testing/Acme.Service.Testing.csproj" />
+  </Folder>
+</Solution>

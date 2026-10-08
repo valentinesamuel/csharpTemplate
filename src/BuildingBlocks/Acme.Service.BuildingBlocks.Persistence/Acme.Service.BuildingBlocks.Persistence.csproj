@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Acme.Service.BuildingBlocks\Acme.Service.BuildingBlocks.csproj" />
+  </ItemGroup>
+
+</Project>

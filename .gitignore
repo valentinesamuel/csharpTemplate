@@ -1,0 +1,27 @@
+bin/
+obj/
+.vs/
+.idea/
+*.user
+.env
+deploy/compose/.env
+.claude/settings.local.json
+TestResults/
+coverage/
+
+# Build and tooling output
+artifacts/
+publish/
+*.suo
+*.userprefs
+*.swp
+*.log
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+coverage*.info
+.vscode/
+.DS_Store
+Thumbs.db
