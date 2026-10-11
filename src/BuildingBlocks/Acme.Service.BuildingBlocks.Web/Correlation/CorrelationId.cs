@@ -1,4 +1,5 @@
-using System.Diagnostics;
+using Acme.Service.BuildingBlocks.Correlation;
+using Acme.Service.BuildingBlocks.Logging;
 
 namespace Acme.Service.BuildingBlocks.Web.Correlation;
 
@@ -9,12 +10,12 @@ public static class CorrelationId
     public const string HeaderName = "X-Correlation-Id";
 
     /// <summary>The log scope / ProblemDetails property name.</summary>
-    public const string PropertyName = "CorrelationId";
+    public const string PropertyName = LogPropertyNames.CorrelationId;
 
     /// <summary>Maximum accepted length of an inbound correlation id.</summary>
     public const int MaxLength = 64;
 
-    /// <summary>True when <paramref name="value"/> is 1 to 64 characters of <c>[A-Za-z0-9-_]</c>.</summary>
+    /// <summary>True when <paramref name="value"/> is 1 to 64 characters of <c>[A-Za-z0-9]</c>.</summary>
     public static bool IsValid(string? value)
     {
         if (string.IsNullOrEmpty(value) || value.Length > MaxLength)
@@ -24,7 +25,7 @@ public static class CorrelationId
 
         foreach (var c in value)
         {
-            if (!char.IsAsciiLetterOrDigit(c) && c != '-' && c != '_')
+            if (!char.IsAsciiLetterOrDigit(c))
             {
                 return false;
             }
@@ -34,6 +35,5 @@ public static class CorrelationId
     }
 
     /// <summary>Generates a correlation id from the current trace id, or a new random trace id when no activity is in scope.</summary>
-    public static string Generate() =>
-        (Activity.Current?.TraceId ?? ActivityTraceId.CreateRandom()).ToHexString();
+    public static string Generate() => CorrelationIdGenerator.Generate();
 }

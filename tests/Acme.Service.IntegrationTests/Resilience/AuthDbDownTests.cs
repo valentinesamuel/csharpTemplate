@@ -1,5 +1,6 @@
 using System.Net;
 using Acme.Service.IntegrationTests.Fixtures;
+using Acme.Service.Testing;
 using Shouldly;
 
 namespace Acme.Service.IntegrationTests.Resilience;
@@ -41,9 +42,9 @@ public sealed class AuthDbDownTests
         await host.UnpauseAsync();
 
         customerClaims.StatusCode.ShouldBe(HttpStatusCode.OK);
-        (await ServiceApi.JsonAsync(customerClaims)).GetProperty("sub").GetString().ShouldBe(customer.Id.ToString());
+        (await customerClaims.Content.ReadJsonAsync(TestContext.Current.CancellationToken)).GetProperty("sub").GetString().ShouldBe(customer.Id.ToString());
         adminClaims.StatusCode.ShouldBe(HttpStatusCode.OK);
-        (await ServiceApi.JsonAsync(adminClaims)).GetProperty("perms").EnumerateArray().Select(p => p.GetString())
+        (await adminClaims.Content.ReadJsonAsync(TestContext.Current.CancellationToken)).GetProperty("perms").EnumerateArray().Select(p => p.GetString())
             .ShouldContain("roles.read");
         tampered.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         expiredResponse.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);

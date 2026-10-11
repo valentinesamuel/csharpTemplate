@@ -8,6 +8,7 @@ namespace Acme.Service.IntegrationTests;
 public sealed class HostSmokeTests(ServiceWebFactory factory) : IClassFixture<ServiceWebFactory>
 {
     private const string CorrelationHeader = "X-Correlation-Id";
+    private const string RequestIdHeader = "X-Request-Id";
 
     [Fact]
     [Trait("Category", "Integration")]
@@ -37,11 +38,11 @@ public sealed class HostSmokeTests(ServiceWebFactory factory) : IClassFixture<Se
     {
         using var client = factory.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("/health/live", UriKind.Relative));
-        request.Headers.Add(CorrelationHeader, "test-123");
+        request.Headers.Add(CorrelationHeader, "test123");
 
         using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
 
-        response.Headers.GetValues(CorrelationHeader).ShouldBe(["test-123"]);
+        response.Headers.GetValues(CorrelationHeader).ShouldBe(["test123"]);
     }
 
     [Theory]
@@ -84,5 +85,25 @@ public sealed class HostSmokeTests(ServiceWebFactory factory) : IClassFixture<Se
         root.GetProperty("traceId").GetString().ShouldNotBeNullOrWhiteSpace();
         root.GetProperty("correlationId").GetString()
             .ShouldBe(response.Headers.GetValues(CorrelationHeader).ShouldHaveSingleItem());
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Get_SuccessAndErrorResponses_CarryAlphanumericRequestIdMatchingBody()
+    {
+        using var client = factory.CreateClient();
+
+        using var success = await client.GetAsync(new Uri("/health/live", UriKind.Relative), TestContext.Current.CancellationToken);
+        using var error = await client.GetAsync(new Uri("/nope", UriKind.Relative), TestContext.Current.CancellationToken);
+
+        var successHeader = success.Headers.GetValues(RequestIdHeader).ShouldHaveSingleItem();
+        var errorHeader = error.Headers.GetValues(RequestIdHeader).ShouldHaveSingleItem();
+        successHeader.ShouldMatch("^[A-Za-z0-9]+$");
+        errorHeader.ShouldMatch("^[A-Za-z0-9]+$");
+        successHeader.ShouldNotBe(errorHeader);
+
+        using var problem = JsonDocument.Parse(await error.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        problem.RootElement.GetProperty("isSuccess").GetBoolean().ShouldBeFalse();
+        problem.RootElement.GetProperty("requestId").GetString().ShouldBe(errorHeader);
     }
 }

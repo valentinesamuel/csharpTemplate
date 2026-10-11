@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Acme.Service.BuildingBlocks.Correlation;
 using Acme.Service.BuildingBlocks.Jobs;
+using Acme.Service.BuildingBlocks.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -76,7 +77,7 @@ public sealed record HangfireJobMetadata(string? CorrelationId);
 /// <summary>Per-run DI scope and correlation handling shared by the runners.</summary>
 internal static partial class HangfireJobScope
 {
-    private const string CorrelationIdProperty = "CorrelationId";
+    private const string CorrelationIdProperty = LogPropertyNames.CorrelationId;
 
     // An async method: the correlation id set here (AsyncLocal) does not leak back into Hangfire's worker.
     public static async Task RunAsync(
@@ -87,9 +88,10 @@ internal static partial class HangfireJobScope
         Func<IServiceProvider, CancellationToken, Task> execute,
         CancellationToken cancellationToken)
     {
-        using var logScope = correlationId is null
-            ? null
-            : logger.BeginScope(new Dictionary<string, object> { [CorrelationIdProperty] = correlationId });
+        // No enqueue-time id (recurring runs, or none was in scope): generate one per attempt (D-07 A), so every run
+        // logs with a correlation id and downstream work sees the same value.
+        var effective = string.IsNullOrEmpty(correlationId) ? CorrelationIdGenerator.Generate() : correlationId;
+        using var logScope = logger.BeginScope(new Dictionary<string, object> { [CorrelationIdProperty] = effective });
 
         var scope = scopeFactory.CreateAsyncScope();
         await using (scope.ConfigureAwait(false))
@@ -98,7 +100,7 @@ internal static partial class HangfireJobScope
             var previous = correlation?.CorrelationId;
             if (correlation is not null)
             {
-                correlation.CorrelationId = correlationId;
+                correlation.CorrelationId = effective;
             }
 
             try

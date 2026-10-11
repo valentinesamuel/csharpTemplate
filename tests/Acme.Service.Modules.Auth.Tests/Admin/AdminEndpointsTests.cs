@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Acme.Service.Modules.Auth.Tests.Fixtures;
 using Acme.Service.Testing.Containers;
+using Acme.Service.Testing;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Shouldly;
 
@@ -40,7 +41,7 @@ public sealed class AdminEndpointsTests(PostgresFixture postgres)
         asCustomer.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         anonymous.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         asStaff.StatusCode.ShouldBe(HttpStatusCode.OK, await asStaff.Content.ReadAsStringAsync(Ct));
-        var roles = (await asStaff.Content.ReadFromJsonAsync<List<RoleBody>>(Ct))!;
+        var roles = (await asStaff.Content.ReadDataAsync<List<RoleBody>>(Ct))!;
         roles.Select(r => r.Name).ShouldBe(["Admin", "Customer", "Staff"]);
         var staffPermissions = roles.Single(r => r.Name == "Staff").Permissions;
         staffPermissions.ShouldContain("roles.read");
@@ -89,12 +90,12 @@ public sealed class AdminEndpointsTests(PostgresFixture postgres)
         using var assign = await SendAsync(factory, HttpMethod.Post, $"/users/{customerId}/roles/Staff", staff.AccessToken);
 
         found.StatusCode.ShouldBe(HttpStatusCode.OK, await found.Content.ReadAsStringAsync(Ct));
-        using var body = JsonDocument.Parse(await found.Content.ReadAsStringAsync(Ct));
-        body.RootElement.GetProperty("id").GetGuid().ShouldBe(customerId);
-        body.RootElement.GetProperty("email").GetString().ShouldBe("customer@example.com");
-        body.RootElement.GetProperty("lockedOut").GetBoolean().ShouldBeFalse();
-        body.RootElement.GetProperty("roles").EnumerateArray().Select(r => r.GetString()).ShouldBe(["Customer"]);
-        body.RootElement.TryGetProperty("passwordHash", out _).ShouldBeFalse();
+        var body = await found.Content.ReadDataElementAsync(Ct);
+        body.GetProperty("id").GetGuid().ShouldBe(customerId);
+        body.GetProperty("email").GetString().ShouldBe("customer@example.com");
+        body.GetProperty("lockedOut").GetBoolean().ShouldBeFalse();
+        body.GetProperty("roles").EnumerateArray().Select(r => r.GetString()).ShouldBe(["Customer"]);
+        body.TryGetProperty("passwordHash", out _).ShouldBeFalse();
         missing.StatusCode.ShouldBe(HttpStatusCode.NotFound);
         (await AccountClient.ProblemCodeAsync(missing)).ShouldBe("user_not_found");
 
@@ -280,8 +281,8 @@ public sealed class AdminEndpointsTests(PostgresFixture postgres)
             connectionString, "SELECT security_stamp FROM auth.users WHERE id = @id", ("id", userId))).ShouldNotBe(stampBefore);
         using (var read = await SendAsync(factory, HttpMethod.Get, $"/users/{userId}", admin.AccessToken))
         {
-            using var body = JsonDocument.Parse(await read.Content.ReadAsStringAsync(Ct));
-            body.RootElement.GetProperty("lockedOut").GetBoolean().ShouldBeTrue();
+            var body = await read.Content.ReadDataElementAsync(Ct);
+            body.GetProperty("lockedOut").GetBoolean().ShouldBeTrue();
         }
 
         using (var unlock = await SendAsync(factory, HttpMethod.Post, $"/users/{userId}/unlock", admin.AccessToken))
@@ -319,7 +320,7 @@ public sealed class AdminEndpointsTests(PostgresFixture postgres)
     {
         using var response = await client.RefreshAsync(refreshToken);
         response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Ct));
-        return (await response.Content.ReadFromJsonAsync<TokenBody>(Ct))!;
+        return (await response.Content.ReadDataAsync<TokenBody>(Ct))!;
     }
 
     private static async Task<HttpResponseMessage> SendAsync(AccountWebFactory factory, HttpMethod method, string path, string? accessToken)

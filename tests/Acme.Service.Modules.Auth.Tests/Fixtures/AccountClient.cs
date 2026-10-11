@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Acme.Service.BuildingBlocks.Notifications;
+using Acme.Service.Testing;
 using Microsoft.AspNetCore.WebUtilities;
 using Shouldly;
 
@@ -67,10 +68,10 @@ internal sealed class AccountClient(AccountWebFactory factory, string? clientIp 
     {
         using var response = await LoginAsync(email, password);
         response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Ct));
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
-        document.RootElement.GetProperty("mfaRequired").GetBoolean().ShouldBeTrue();
-        document.RootElement.TryGetProperty("accessToken", out _).ShouldBeFalse();
-        return document.RootElement.GetProperty("mfaToken").GetString()!;
+        var data = await response.Content.ReadDataElementAsync(Ct);
+        data.GetProperty("mfaRequired").GetBoolean().ShouldBeTrue();
+        data.TryGetProperty("accessToken", out _).ShouldBeFalse();
+        return data.GetProperty("mfaToken").GetString()!;
     }
 
     public async Task<HttpResponseMessage> MeAsync(string? accessToken)
@@ -85,7 +86,7 @@ internal sealed class AccountClient(AccountWebFactory factory, string? clientIp 
     {
         using var response = await LoginAsync(email, password);
         response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Ct));
-        return (await response.Content.ReadFromJsonAsync<TokenBody>(Ct))!;
+        return (await response.Content.ReadDataAsync<TokenBody>(Ct))!;
     }
 
     /// <summary>Registers, reads the captured confirmation email and confirms the address; returns the user id.</summary>

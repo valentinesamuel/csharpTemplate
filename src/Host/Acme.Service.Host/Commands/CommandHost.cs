@@ -1,5 +1,5 @@
-using System.Globalization;
 using Acme.Service.BuildingBlocks.Web.Modules;
+using Acme.Service.Host.Observability;
 using Acme.Service.Host.Security;
 using Serilog;
 
@@ -19,10 +19,15 @@ internal static class CommandHost
     {
         var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder([.. configurationArgs]);
         builder.Services.AddSerilog(
-            (services, logger) => logger
-                .ReadFrom.Configuration(services.GetRequiredService<IConfiguration>())
-                .Enrich.FromLogContext()
-                .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture),
+            (services, logger) =>
+            {
+                var configuration = services.GetRequiredService<IConfiguration>();
+                var serviceName = ObservabilityExtensions.ReadSettings(configuration).ServiceName;
+                LoggingSetup.ConfigureConsole(
+                    logger.ReadFrom.Configuration(configuration),
+                    string.IsNullOrWhiteSpace(serviceName) ? null : serviceName,
+                    services.GetRequiredService<IHostEnvironment>().EnvironmentName);
+            },
             preserveStaticLogger: true);
 
         builder.Services.AddDataProtectionSetup();

@@ -1,4 +1,5 @@
 using Acme.Service.BuildingBlocks.Correlation;
+using Acme.Service.BuildingBlocks.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -18,7 +19,7 @@ internal sealed partial class InMemoryJobWorker(
     IOptions<InMemoryJobQueueOptions> options,
     ILogger<InMemoryJobWorker> logger) : BackgroundService
 {
-    private const string CorrelationIdProperty = "CorrelationId";
+    private const string CorrelationIdProperty = LogPropertyNames.CorrelationId;
 
     /// <inheritdoc />
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
@@ -45,18 +46,18 @@ internal sealed partial class InMemoryJobWorker(
     // A separate async method: the correlation id set here (AsyncLocal) does not leak back into the loop.
     private async Task RunAsync(JobWorkItem item, InMemoryJobQueueOptions settings, CancellationToken stoppingToken)
     {
-        using var logScope = item.CorrelationId is null
-            ? null
-            : logger.BeginScope(new Dictionary<string, object> { [CorrelationIdProperty] = item.CorrelationId });
+        // No enqueue-time id (recurring runs, or none was in scope): generate one at run time; retries carry it.
+        var effective = string.IsNullOrEmpty(item.CorrelationId) ? CorrelationIdGenerator.Generate() : item.CorrelationId;
+        using var logScope = logger.BeginScope(new Dictionary<string, object> { [CorrelationIdProperty] = effective });
 
         try
         {
             var scope = scopeFactory.CreateAsyncScope();
             await using (scope.ConfigureAwait(false))
             {
-                if (item.CorrelationId is not null && scope.ServiceProvider.GetService<ICorrelationContext>() is { } correlation)
+                if (scope.ServiceProvider.GetService<ICorrelationContext>() is { } correlation)
                 {
-                    correlation.CorrelationId = item.CorrelationId;
+                    correlation.CorrelationId = effective;
                 }
 
                 await item.Execute(scope.ServiceProvider, stoppingToken).ConfigureAwait(false);
@@ -73,7 +74,7 @@ internal sealed partial class InMemoryJobWorker(
             if (item.Attempt <= settings.MaxRetries)
             {
                 LogRetrying(logger, ex, item.JobName, item.Id, item.Attempt, settings.RetryDelay);
-                TrySchedule(item with { Attempt = item.Attempt + 1 }, settings.RetryDelay);
+                TrySchedule(item with { Attempt = item.Attempt + 1, CorrelationId = effective }, settings.RetryDelay);
             }
             else
             {

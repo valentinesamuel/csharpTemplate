@@ -2,7 +2,7 @@
 
 > Applies to: Acme.Service template
 
-Every non-2xx response is an RFC 7807 problem document with content type `application/problem+json`. Success bodies are plain DTOs; lists use a paging envelope. There is no `{ data, error }` wrapper ([ADR-0011](../adr/0011-problem-details-no-envelope.md), INV-18).
+Every non-2xx response is an RFC 7807 problem document with content type `application/problem+json`. Success bodies are wrapped as `{ isSuccess, requestId, correlationId, data }`; problems stay flat and carry the same `isSuccess` and `requestId` ([ADR-0017](../adr/0017-response-envelope.md), INV-18; supersedes ADR-0011).
 
 ## Shape
 
@@ -13,6 +13,8 @@ Every non-2xx response is an RFC 7807 problem document with content type `applic
   "status": 409,
   "detail": "The order is no longer pending.",
   "code": "invalid_transition",
+  "isSuccess": false,
+  "requestId": "0HNP7R1GJ7MSQ00000002",
   "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
   "correlationId": "checkout-7f3a"
 }
@@ -23,9 +25,13 @@ Every non-2xx response is an RFC 7807 problem document with content type `applic
 | `status`, `title`, `type` | ASP.NET Core ProblemDetails defaults for the status code. |
 | `detail` | The `Error.Message` of a failed `Result`. Removed for unhandled exceptions outside Development. |
 | `code` | Machine-readable, stable, snake_case. From `Error.Code`, or derived from the status when the response did not come from a `Result` (for example `unauthorized`, `not_found`, `internal_error`). |
+| `isSuccess` | Always `false` on a problem. |
+| `requestId` | Alphanumeric per-request id; the same value as the `requestId` log field and the `X-Request-Id` header. |
 | `traceId` | The W3C trace id of the current activity. |
 | `correlationId` | The request's correlation id (also in the `X-Correlation-Id` response header). |
 | `errors` | Validation failures only: a dictionary from property name to messages. |
+
+Success example: `{ "isSuccess": true, "requestId": "0HNP7R1GJ7MSQ00000002", "correlationId": "checkout7f3a", "data": { ... } }`. 204, redirects and streams have no body; the ids are in the `X-Request-Id` and `X-Correlation-Id` headers.
 
 Clients should branch on `status` and `code`, never on `title` or `detail`.
 

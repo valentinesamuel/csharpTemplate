@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Acme.Service.Modules.Auth.Domain;
 using Acme.Service.Modules.Auth.Tests.Fixtures;
 using Acme.Service.Testing.Containers;
+using Acme.Service.Testing;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
@@ -32,15 +33,15 @@ public sealed class MfaLoginTests(PostgresFixture postgres)
         var tokens = await client.LoginTokensAsync("mfa@example.com");
 
         using var setup = await client.MfaSetupAsync(tokens.AccessToken);
-        var key = (await setup.Content.ReadFromJsonAsync<MfaSetupBody>(Ct))!;
+        var key = (await setup.Content.ReadDataAsync<MfaSetupBody>(Ct))!;
         using var verify = await client.MfaVerifyAsync(tokens.AccessToken, Rfc6238.Code(key.SharedKey, clock.GetUtcNow()));
-        var codes = (await verify.Content.ReadFromJsonAsync<RecoveryCodesBody>(Ct))!.RecoveryCodes;
+        var codes = (await verify.Content.ReadDataAsync<RecoveryCodesBody>(Ct))!.RecoveryCodes;
         using var me = await client.MeAsync(tokens.AccessToken);
         using var setupAgain = await client.MfaSetupAsync(tokens.AccessToken);
         clock.Advance(Rfc6238.Step);
         var mfaToken = await client.LoginMfaTokenAsync("mfa@example.com");
         using var complete = await client.LoginMfaAsync(mfaToken, code: Rfc6238.Code(key.SharedKey, clock.GetUtcNow()));
-        var signedIn = (await complete.Content.ReadFromJsonAsync<TokenBody>(Ct))!;
+        var signedIn = (await complete.Content.ReadDataAsync<TokenBody>(Ct))!;
         using var meAfter = await client.MeAsync(signedIn.AccessToken);
 
         setup.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -254,11 +255,11 @@ public sealed class MfaLoginTests(PostgresFixture postgres)
         using var first = await client.LoginMfaAsync(await client.LoginMfaTokenAsync("recovery@example.com"), recoveryCode: codes[0]);
         using var again = await client.LoginMfaAsync(await client.LoginMfaTokenAsync("recovery@example.com"), recoveryCode: codes[0]);
         using var other = await client.LoginMfaAsync(await client.LoginMfaTokenAsync("recovery@example.com"), recoveryCode: codes[1]);
-        var session = (await other.Content.ReadFromJsonAsync<TokenBody>(Ct))!;
+        var session = (await other.Content.ReadDataAsync<TokenBody>(Ct))!;
         using var wrongPassword = await client.MfaRecoveryCodesAsync(session.AccessToken, "not the right password");
         using var regenerate = await client.MfaRecoveryCodesAsync(session.AccessToken);
         regenerate.StatusCode.ShouldBe(HttpStatusCode.OK, await regenerate.Content.ReadAsStringAsync(Ct));
-        var renewed = (await regenerate.Content.ReadFromJsonAsync<RecoveryCodesBody>(Ct))!.RecoveryCodes;
+        var renewed = (await regenerate.Content.ReadDataAsync<RecoveryCodesBody>(Ct))!.RecoveryCodes;
         using var oldCode = await client.LoginMfaAsync(await client.LoginMfaTokenAsync("recovery@example.com"), recoveryCode: codes[2]);
         using var newCode = await client.LoginMfaAsync(await client.LoginMfaTokenAsync("recovery@example.com"), recoveryCode: renewed[0]);
 
@@ -285,7 +286,7 @@ public sealed class MfaLoginTests(PostgresFixture postgres)
         var (_, key, _) = await MfaTestHost.EnableMfaAsync(client, clock, "disable@example.com");
         using var signIn = await client.LoginMfaAsync(
             await client.LoginMfaTokenAsync("disable@example.com"), code: Rfc6238.Code(key, clock.GetUtcNow()));
-        var session = (await signIn.Content.ReadFromJsonAsync<TokenBody>(Ct))!;
+        var session = (await signIn.Content.ReadDataAsync<TokenBody>(Ct))!;
 
         using var wrong = await client.MfaDisableAsync(session.AccessToken, "not the right password");
         using var disable = await client.MfaDisableAsync(session.AccessToken);
@@ -301,7 +302,7 @@ public sealed class MfaLoginTests(PostgresFixture postgres)
         regenerate.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await AccountClient.ProblemCodeAsync(regenerate)).ShouldBe("mfa_not_enabled");
         setup.StatusCode.ShouldBe(HttpStatusCode.OK);
-        (await setup.Content.ReadFromJsonAsync<MfaSetupBody>(Ct))!.SharedKey.ShouldNotBe(key);
+        (await setup.Content.ReadDataAsync<MfaSetupBody>(Ct))!.SharedKey.ShouldNotBe(key);
     }
 
     [Fact]
@@ -342,7 +343,7 @@ public sealed class MfaLoginTests(PostgresFixture postgres)
         var tokens = await client.LoginTokensAsync("verify@example.com");
         using var noKey = await client.MfaVerifyAsync(tokens.AccessToken, "123456");
         using var setup = await client.MfaSetupAsync(tokens.AccessToken);
-        var key = (await setup.Content.ReadFromJsonAsync<MfaSetupBody>(Ct))!.SharedKey;
+        var key = (await setup.Content.ReadDataAsync<MfaSetupBody>(Ct))!.SharedKey;
 
         using var wrong = await client.MfaVerifyAsync(tokens.AccessToken, Rfc6238.WrongCode(key, clock.GetUtcNow()));
         using var malformed = await client.MfaVerifyAsync(tokens.AccessToken, "12ab56");

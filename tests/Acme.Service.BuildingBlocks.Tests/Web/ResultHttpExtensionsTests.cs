@@ -38,9 +38,9 @@ public sealed class ResultHttpExtensionsTests
     {
         var result = Result.Failure<int>(Error.NotFound("thing_not_found", "No such thing."));
 
-        var (_, json) = await ExecuteAsync(result.ToHttpResult(), correlationId: "corr-123");
+        var (_, json) = await ExecuteAsync(result.ToHttpResult(), correlationId: "corr123");
 
-        json.GetProperty("correlationId").GetString().ShouldBe("corr-123");
+        json.GetProperty("correlationId").GetString().ShouldBe("corr123");
         json.GetProperty("traceId").GetString().ShouldNotBeNullOrEmpty();
     }
 
@@ -87,8 +87,29 @@ public sealed class ResultHttpExtensionsTests
         var (http, json) = await ExecuteAsync(Result.Success(new Dto("x", 3)).ToHttpResult());
 
         http.Response.StatusCode.ShouldBe(200);
-        json.GetProperty("name").GetString().ShouldBe("x");
-        json.GetProperty("count").GetInt32().ShouldBe(3);
+        json.GetProperty("data").GetProperty("name").GetString().ShouldBe("x");
+        json.GetProperty("data").GetProperty("count").GetInt32().ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task ToHttpResult_SuccessWithValue_WrapsDataInEnvelopeWithIds()
+    {
+        var (_, json) = await ExecuteAsync(Result.Success(new Dto("x", 3)).ToHttpResult(), correlationId: "corr123");
+
+        json.GetProperty("isSuccess").GetBoolean().ShouldBeTrue();
+        json.GetProperty("requestId").GetString().ShouldNotBeNull().ShouldMatch("^[A-Za-z0-9]+$");
+        json.GetProperty("correlationId").GetString().ShouldBe("corr123");
+        json.GetProperty("correlationId").GetString().ShouldNotBeNull().ShouldMatch("^[A-Za-z0-9]+$");
+        json.GetProperty("data").GetProperty("name").GetString().ShouldBe("x");
+    }
+
+    [Fact]
+    public async Task ToHttpResult_Failure_HasIsSuccessFalseAndRequestId()
+    {
+        var (_, json) = await ExecuteAsync(Result.Failure<int>(Error.NotFound("nf", "Missing.")).ToHttpResult());
+
+        json.GetProperty("isSuccess").GetBoolean().ShouldBeFalse();
+        json.GetProperty("requestId").GetString().ShouldNotBeNull().ShouldMatch("^[A-Za-z0-9]+$");
     }
 
     [Fact]
@@ -105,10 +126,12 @@ public sealed class ResultHttpExtensionsTests
     {
         var result = Result.Success(42).ToHttpResult(id => TypedResults.Created($"/things/{id}", id));
 
-        var http = await ExecuteRawAsync(result);
+        var (http, json) = await ExecuteAsync(result);
 
         http.Response.StatusCode.ShouldBe(201);
         http.Response.Headers.Location.ToString().ShouldBe("/things/42");
+        json.GetProperty("isSuccess").GetBoolean().ShouldBeTrue();
+        json.GetProperty("data").GetInt32().ShouldBe(42);
     }
 
     private static async Task<(HttpContext Http, JsonElement Json)> ExecuteAsync(IResult result, string? correlationId = null)

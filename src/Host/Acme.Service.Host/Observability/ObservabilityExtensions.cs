@@ -1,27 +1,24 @@
-using System.Globalization;
+using Acme.Service.BuildingBlocks.Logging;
 using Acme.Service.BuildingBlocks.Persistence.Messaging;
 using Acme.Service.BuildingBlocks.Web.Correlation;
 using Acme.Service.Host.Configuration;
+using Microsoft.AspNetCore.Diagnostics;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
 using Serilog.Events;
-using Serilog.Formatting.Compact;
 using Serilog.Sinks.OpenTelemetry;
 
 namespace Acme.Service.Host.Observability;
 
 /// <summary>
-/// Serilog (console: plain text in Development, compact JSON elsewhere; OTLP logs when
-/// <c>Observability:Otlp:Endpoint</c> is set) and OpenTelemetry traces and metrics.
+/// Serilog (console: one JSON line per event in every environment, defined by <see cref="LoggingSetup"/>; OTLP logs
+/// when <c>Observability:Otlp:Endpoint</c> is set) and OpenTelemetry traces and metrics.
 /// </summary>
 internal static class ObservabilityExtensions
 {
-    private const string DevelopmentOutputTemplate =
-        "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext} {CorrelationId} {Message:lj}{NewLine}{Exception}";
-
     // Npgsql emits traces and metrics natively under this name; no extra package is needed.
     private const string NpgsqlTelemetryName = "Npgsql";
 
@@ -34,6 +31,7 @@ internal static class ObservabilityExtensions
         builder.Services.AddSerilog(
             (services, logger) => ConfigureSerilog(
                 logger,
+                services,
                 services.GetRequiredService<IConfiguration>(),
                 services.GetRequiredService<IHostEnvironment>()),
             preserveStaticLogger: true);
@@ -75,12 +73,20 @@ internal static class ObservabilityExtensions
     /// One summary event per request. Only method, path (never the query string), status and timing are
     /// logged; no headers (so never Authorization) are captured (INV-28).
     /// </summary>
+    /// <remarks>
+    /// The summary is written through the DI <see cref="Serilog.ILogger"/> and does not see Microsoft.Extensions.Logging
+    /// scopes, so its request context is set explicitly (S5): <c>CorrelationId</c> and <c>RequestId</c> through the
+    /// diagnostic context, the template properties plus the dotted <c>Http.*</c> properties (the JSON
+    /// <c>requestMeta</c>) through <see cref="Serilog.AspNetCore.RequestLoggingOptions.GetMessageTemplateProperties"/>.
+    /// The path comes from <see cref="RequestLogValues.Path"/>, identical to the one on every line inside the request.
+    /// </remarks>
     public static WebApplication UseRequestLogging(this WebApplication app)
     {
         app.UseSerilogRequestLogging(options =>
         {
             options.Logger = app.Services.GetService<Serilog.ILogger>();
             options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
+            options.GetMessageTemplateProperties = SummaryProperties;
             options.GetLevel = (http, _, exception) =>
                 exception is not null || http.Response.StatusCode >= StatusCodes.Status500InternalServerError
                     ? LogEventLevel.Error
@@ -94,28 +100,52 @@ internal static class ObservabilityExtensions
                 {
                     diagnostics.Set(CorrelationId.PropertyName, correlationId);
                 }
+
+                diagnostics.Set(LogPropertyNames.RequestId, http.TraceIdentifier);
             };
         });
 
         return app;
     }
 
-    private static void ConfigureSerilog(LoggerConfiguration logger, IConfiguration configuration, IHostEnvironment environment)
+    // The raw-target path Serilog passes in is ignored: the S4 path rule (PathBase + Path, no query) applies.
+    private static IEnumerable<LogEventProperty> SummaryProperties(HttpContext http, string _, double elapsedMs, int statusCode)
+    {
+        var path = RequestLogValues.Path(http.Request);
+        var isSuccess = RequestLogValues.IsSuccess(statusCode, http.Features.Get<IExceptionHandlerFeature>() is not null);
+
+        return
+        [
+            new LogEventProperty(LogPropertyNames.RequestMethod, new ScalarValue(http.Request.Method)),
+            new LogEventProperty(LogPropertyNames.RequestPath, new ScalarValue(path)),
+            new LogEventProperty(LogPropertyNames.StatusCode, new ScalarValue(statusCode)),
+            new LogEventProperty(LogPropertyNames.Elapsed, new ScalarValue(elapsedMs)),
+            new LogEventProperty(LogPropertyNames.HttpMethod, new ScalarValue(http.Request.Method)),
+            new LogEventProperty(LogPropertyNames.HttpPath, new ScalarValue(path)),
+            new LogEventProperty(LogPropertyNames.HttpStatusCode, new ScalarValue(statusCode)),
+            new LogEventProperty(LogPropertyNames.HttpDurationMs, new ScalarValue(elapsedMs)),
+            new LogEventProperty(LogPropertyNames.HttpIsSuccess, new ScalarValue(isSuccess)),
+        ];
+    }
+
+    private static void ConfigureSerilog(
+        LoggerConfiguration logger,
+        IServiceProvider services,
+        IConfiguration configuration,
+        IHostEnvironment environment)
     {
         var settings = ReadSettings(configuration);
 
+        // ReadFrom.Services adds ILogEventSink/ILogEventEnricher registrations from DI (the test capture seam, D-06).
         logger
             .ReadFrom.Configuration(configuration)
-            .Enrich.FromLogContext();
+            .ReadFrom.Services(services);
 
-        if (environment.IsDevelopment())
-        {
-            logger.WriteTo.Console(outputTemplate: DevelopmentOutputTemplate, formatProvider: CultureInfo.InvariantCulture);
-        }
-        else
-        {
-            logger.WriteTo.Console(new RenderedCompactJsonFormatter());
-        }
+        // The JSON service field and the OTLP service.name come from the same setting (LOG-13).
+        LoggingSetup.ConfigureConsole(
+            logger,
+            string.IsNullOrWhiteSpace(settings.ServiceName) ? null : settings.ServiceName,
+            environment.EnvironmentName);
 
         var otlpEndpoint = OtlpEndpoint(settings);
         if (otlpEndpoint is not null)
@@ -132,7 +162,7 @@ internal static class ObservabilityExtensions
         }
     }
 
-    private static ObservabilityOptions ReadSettings(IConfiguration configuration) =>
+    internal static ObservabilityOptions ReadSettings(IConfiguration configuration) =>
         configuration.GetSection(ObservabilityOptions.SectionName).Get<ObservabilityOptions>() ?? new ObservabilityOptions();
 
     private static Uri? OtlpEndpoint(ObservabilityOptions settings) =>

@@ -3,6 +3,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Acme.Service.IntegrationTests.Fixtures;
+using Acme.Service.Testing;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
@@ -28,7 +29,7 @@ public sealed class AuthNegativeTests(MigratedHostFixture host) : IClassFixture<
         using var response = await host.Api.GetAsync(ClaimsProbeModule.ClaimsPath, AccessTokenForge.Valid("users.read"));
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Ct));
-        (await ServiceApi.JsonAsync(response)).GetProperty("perms")[0].GetString().ShouldBe("users.read");
+        (await response.Content.ReadJsonAsync(Ct)).GetProperty("perms")[0].GetString().ShouldBe("users.read");
     }
 
     [Theory]

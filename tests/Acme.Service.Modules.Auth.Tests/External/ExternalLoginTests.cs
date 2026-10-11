@@ -258,7 +258,7 @@ public sealed class ExternalLoginTests(PostgresFixture postgres)
         using var replay = await ExchangeAsync(factory, result.Code!);
 
         first.StatusCode.ShouldBe(HttpStatusCode.OK, await first.Content.ReadAsStringAsync(Ct));
-        var tokens = (await first.Content.ReadFromJsonAsync<TokenBody>(Ct))!;
+        var tokens = (await first.Content.ReadDataAsync<TokenBody>(Ct))!;
         var jwt = new JsonWebToken(tokens.AccessToken);
         jwt.Claims.Where(c => c.Type == "amr").Select(c => c.Value).ShouldBe(["ext"]);
         jwt.Subject.ShouldBe(result.UserId.ToString());
@@ -332,9 +332,9 @@ public sealed class ExternalLoginTests(PostgresFixture postgres)
         using var exchange = await ExchangeAsync(factory, result.Code!);
 
         exchange.StatusCode.ShouldBe(HttpStatusCode.OK);
-        using var body = JsonDocument.Parse(await exchange.Content.ReadAsStringAsync(Ct));
-        body.RootElement.GetProperty("mfaRequired").GetBoolean().ShouldBeTrue();
-        body.RootElement.TryGetProperty("accessToken", out _).ShouldBeFalse();
+        var body = await exchange.Content.ReadDataElementAsync(Ct);
+        body.GetProperty("mfaRequired").GetBoolean().ShouldBeTrue();
+        body.TryGetProperty("accessToken", out _).ShouldBeFalse();
     }
 
     [Fact]

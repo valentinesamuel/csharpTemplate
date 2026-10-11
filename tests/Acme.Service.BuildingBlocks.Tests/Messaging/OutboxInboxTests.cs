@@ -10,6 +10,7 @@ using Acme.Service.BuildingBlocks.Tests.Persistence.Fixtures;
 using Acme.Service.Testing.Containers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Shouldly;
 
 namespace Acme.Service.BuildingBlocks.Tests.Messaging;
@@ -114,6 +115,35 @@ public sealed class OutboxInboxTests(PostgresFixture postgres)
         inbox.MessageId.ShouldBe(integrationEvent.Id);
         inbox.Consumer.ShouldBe("widgets.IncrementWidgetHandler");
         host.Probe().CorrelationIds.ShouldBe(["corr-123"]);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task DispatchBatchAsync_MessageWithoutCorrelationId_ConsumerSeesGeneratedIdAndRowStaysNull()
+    {
+        var logs = new ScopeRecordingLoggerProvider();
+        await using var host = await MessagingHost.CreateAsync(postgres, Ct, services =>
+        {
+            MessagingHost.SubscribeIncrement(services);
+            services.AddLogging(logging => logging.AddProvider(logs));
+        });
+        await host.SeedAsync(Gear, Ct);
+        var integrationEvent = WidgetOrderedV1.Create(Gear);
+        await host.EnqueueAsync(Ct, integrationEvent);
+        (await host.OutboxAsync(Ct)).ShouldHaveSingleItem().CorrelationId.ShouldBeNull();
+
+        (await host.Dispatcher().DispatchBatchAsync(Ct)).ShouldBe(1);
+
+        var correlationId = host.Probe().CorrelationIds.ShouldHaveSingleItem().ShouldNotBeNull();
+        correlationId.ShouldMatch("^[a-f0-9]{32}$");
+        var row = (await host.OutboxAsync(Ct)).ShouldHaveSingleItem();
+        row.ProcessedAt.ShouldNotBeNull();
+        row.CorrelationId.ShouldBeNull();
+        var dispatchLines = logs.Entries
+            .Where(e => e.Scope.TryGetValue("MessageId", out var id) && Equals(id, integrationEvent.Id))
+            .ToList();
+        dispatchLines.ShouldNotBeEmpty();
+        dispatchLines.ShouldAllBe(e => e.CorrelationId == correlationId);
     }
 
     [Fact]

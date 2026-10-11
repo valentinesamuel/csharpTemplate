@@ -4,6 +4,7 @@ using System.Text.Json;
 using Acme.Service.Modules.Auth.Domain;
 using Acme.Service.Modules.Auth.Tests.Fixtures;
 using Acme.Service.Testing.Containers;
+using Acme.Service.Testing;
 using Shouldly;
 
 namespace Acme.Service.Modules.Auth.Tests.Account;
@@ -34,7 +35,7 @@ public sealed class AccountFlowTests(PostgresFixture postgres)
         var tokens = await client.LoginTokensAsync("flow@example.com");
         using var me = await client.MeAsync(tokens.AccessToken);
         using var refresh = await client.RefreshAsync(tokens.RefreshToken);
-        var renewed = (await refresh.Content.ReadFromJsonAsync<TokenBody>(Ct))!;
+        var renewed = (await refresh.Content.ReadDataAsync<TokenBody>(Ct))!;
         using var logout = await client.LogoutAsync(renewed.AccessToken, renewed.RefreshToken);
         using var refreshAfterLogout = await client.RefreshAsync(renewed.RefreshToken);
 
@@ -50,7 +51,7 @@ public sealed class AccountFlowTests(PostgresFixture postgres)
         tokens.RefreshTokenExpiresAt.ShouldBeGreaterThan(tokens.AccessTokenExpiresAt);
 
         me.StatusCode.ShouldBe(HttpStatusCode.OK);
-        var account = (await me.Content.ReadFromJsonAsync<MeBody>(Ct))!;
+        var account = (await me.Content.ReadDataAsync<MeBody>(Ct))!;
         account.Id.ToString().ShouldBe(link.UserId);
         account.Email.ShouldBe("Flow@Example.com");
         account.DisplayName.ShouldBe("Flow User");
@@ -87,7 +88,7 @@ public sealed class AccountFlowTests(PostgresFixture postgres)
 
         first.StatusCode.ShouldBe(HttpStatusCode.Accepted);
         second.StatusCode.ShouldBe(HttpStatusCode.Accepted);
-        (await second.Content.ReadAsStringAsync(Ct)).ShouldBe(await first.Content.ReadAsStringAsync(Ct));
+        (await second.Content.ReadDataElementAsync(Ct)).GetRawText().ShouldBe((await first.Content.ReadDataElementAsync(Ct)).GetRawText());
         (await AuthTestServices.ScalarAsync<long>(
             factory.ConnectionString,
             "SELECT count(*) FROM auth.users WHERE normalized_email = 'DUP@EXAMPLE.COM'")).ShouldBe(1);
@@ -205,7 +206,7 @@ public sealed class AccountFlowTests(PostgresFixture postgres)
 
         known.StatusCode.ShouldBe(HttpStatusCode.Accepted);
         unknown.StatusCode.ShouldBe(HttpStatusCode.Accepted);
-        (await unknown.Content.ReadAsStringAsync(Ct)).ShouldBe(await known.Content.ReadAsStringAsync(Ct));
+        (await unknown.Content.ReadDataElementAsync(Ct)).GetRawText().ShouldBe((await known.Content.ReadDataElementAsync(Ct)).GetRawText());
         second.UserId.ShouldBe(first.UserId);
         factory.Emails.SentTo("nobody@example.com").ShouldBeEmpty();
         (await OutboxCountAsync(factory, "auth.email-verification-requested.v1")).ShouldBe(2);

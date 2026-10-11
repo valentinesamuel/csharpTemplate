@@ -2,7 +2,7 @@
 
 > Applies to: Acme.Service template
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0017](0017-response-envelope.md)
 - **Date:** 2026-10-08
 
 ## Context

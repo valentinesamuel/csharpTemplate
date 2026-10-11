@@ -281,7 +281,7 @@ docker compose -f deploy/compose/compose.yaml logs -f app
 docker compose -f deploy/compose/compose.yaml down
 ```
 
-Expected output: `up` creates the network, volumes and containers for PostgreSQL, Redis, RustFS, Azurite, Mailpit, the one-shot `migrate` and the app, ending with `Container acme-service-app-1 Started`; the app starts only after `migrate` exited 0. `/health/ready` prints `200` within a few seconds, an unauthenticated API call prints `401`, and Mailpit answers on `http://localhost:8025`. App logs are JSON lines (`@t`, `@m`, `RequestPath`, `StatusCode`, `CorrelationId`); `logs -f` follows until Ctrl+C. `down` removes the containers and network but keeps the data volumes.
+Expected output: `up` creates the network, volumes and containers for PostgreSQL, Redis, RustFS, Azurite, Mailpit, the one-shot `migrate` and the app, ending with `Container acme-service-app-1 Started`; the app starts only after `migrate` exited 0. `/health/ready` prints `200` within a few seconds, an unauthenticated API call prints `401`, and Mailpit answers on `http://localhost:8025`. App logs are JSON lines with a fixed set of keys (`timestamp`, `level`, `message`, `correlationId`, `meta`, `requestMeta`, ..., see [observability](architecture/observability.md#logs)); add `--no-log-prefix` and pipe to `jq` to read them; `logs -f` follows until Ctrl+C. `down` removes the containers and network but keeps the data volumes.
 
 Common errors: `port is already allocated` (change `APP_PORT`, `POSTGRES_PORT` and the other `*_PORT` values in `.env`); `/health/ready` stays `503` while `migrate` failed: `docker compose -f deploy/compose/compose.yaml logs migrate`.
 

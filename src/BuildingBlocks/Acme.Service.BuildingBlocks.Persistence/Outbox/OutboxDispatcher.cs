@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Acme.Service.BuildingBlocks.Correlation;
+using Acme.Service.BuildingBlocks.Logging;
 using Acme.Service.BuildingBlocks.Messaging;
 using Acme.Service.BuildingBlocks.Persistence.Messaging;
 using Microsoft.EntityFrameworkCore;
@@ -231,10 +232,12 @@ internal sealed partial class OutboxDispatcher<TContext> : BackgroundService
     {
         // Restore the enqueuing operation's correlation id and trace for the consumers (D-25). The async
         // method boundary scopes the AsyncLocal change; the finally makes the restore explicit.
+        // A message without an id gets one for this dispatch only; it is never written back to the row.
+        var correlationId = message.CorrelationId ?? CorrelationIdGenerator.Generate();
         var previousCorrelationId = _correlation?.CorrelationId;
         if (_correlation is not null)
         {
-            _correlation.CorrelationId = message.CorrelationId;
+            _correlation.CorrelationId = correlationId;
         }
 
         _ = ActivityContext.TryParse(message.Traceparent, traceState: null, out var parent);
@@ -246,7 +249,7 @@ internal sealed partial class OutboxDispatcher<TContext> : BackgroundService
 
         using var logScope = _logger.BeginScope(new Dictionary<string, object?>
         {
-            ["CorrelationId"] = message.CorrelationId,
+            [LogPropertyNames.CorrelationId] = correlationId,
             ["MessageId"] = message.Id,
             ["EventType"] = message.Type,
         });

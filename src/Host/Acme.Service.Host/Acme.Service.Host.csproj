@@ -39,6 +39,7 @@
     <InternalsVisibleTo Include="Acme.Service.IntegrationTests" />
     <InternalsVisibleTo Include="Acme.Service.Infra.Tests" />
     <InternalsVisibleTo Include="Acme.Service.Modules.Auth.Tests" />
+    <InternalsVisibleTo Include="Acme.Service.Testing" />
     <!-- <sample:orders> -->
     <InternalsVisibleTo Include="Acme.Service.Modules.Orders.Tests" />
     <!-- </sample:orders> -->

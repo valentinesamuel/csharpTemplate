@@ -1,3 +1,4 @@
+using Acme.Service.BuildingBlocks.Web.Results;
 using Acme.Service.Modules.Auth.Sessions;
 using Microsoft.AspNetCore.Http;
 
@@ -19,7 +20,7 @@ internal sealed record AcceptedResponse(string Message)
         "If the address can receive email, a message with further instructions has been sent.");
 
     /// <summary>202 Accepted with <see cref="CheckInbox"/>.</summary>
-    public static IResult ToHttpResult() => TypedResults.Accepted((string?)null, CheckInbox);
+    public static IResult ToHttpResult() => EnvelopeResult.Wrap(TypedResults.Accepted((string?)null, CheckInbox));
 }
 
 /// <summary>Tokens returned by sign-in and refresh (D-10: in the JSON body).</summary>

@@ -6,6 +6,7 @@ using Acme.Service.Host.Commands;
 using Acme.Service.Host.Modules;
 using Acme.Service.Modules.Auth;
 using Acme.Service.Testing.Containers;
+using Acme.Service.Testing;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -71,8 +72,8 @@ internal sealed class OrdersTestHost : IAsyncDisposable
 
         using var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = Password }, Ct);
         login.StatusCode.ShouldBe(HttpStatusCode.OK, await login.Content.ReadAsStringAsync(Ct));
-        using var body = JsonDocument.Parse(await login.Content.ReadAsStringAsync(Ct));
-        return new TestUser(userId, body.RootElement.GetProperty("accessToken").GetString()!);
+        var body = await login.Content.ReadDataElementAsync(Ct);
+        return new TestUser(userId, body.GetProperty("accessToken").GetString()!);
     }
 
     /// <summary>Sends a request with an optional bearer token and JSON body.</summary>
@@ -131,18 +132,20 @@ internal sealed class OrdersTestHost : IAsyncDisposable
     public static object LinesBody(uint version, params (string Sku, int Quantity, decimal UnitPrice)[] lines) =>
         new { version, lines = lines.Select(l => new { sku = l.Sku, quantity = l.Quantity, unitPrice = l.UnitPrice }).ToArray() };
 
-    /// <summary>The response body as a detached JSON element.</summary>
+    /// <summary>The <c>data</c> of the success envelope as a detached JSON element.</summary>
     public static async Task<JsonElement> JsonAsync(HttpResponseMessage response)
     {
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
-        return document.RootElement.Clone();
+        return await response.Content.ReadDataElementAsync(Ct);
     }
 
     /// <summary>The <c>code</c> extension of a problem response, asserting the problem content type.</summary>
     public static async Task<string?> ProblemCodeAsync(HttpResponseMessage response)
     {
         response.Content.Headers.ContentType?.MediaType.ShouldBe("application/problem+json");
-        var body = await JsonAsync(response);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        var body = document.RootElement;
+        body.GetProperty("isSuccess").GetBoolean().ShouldBeFalse();
+        body.TryGetProperty("requestId", out _).ShouldBeTrue();
         body.TryGetProperty("traceId", out _).ShouldBeTrue();
         body.TryGetProperty("correlationId", out _).ShouldBeTrue();
         return body.TryGetProperty("code", out var code) ? code.GetString() : null;

@@ -1,4 +1,3 @@
-using System.Globalization;
 using Acme.Service.BuildingBlocks.Correlation;
 using Acme.Service.BuildingBlocks.Infra.AzureBlob;
 using Acme.Service.BuildingBlocks.Infra.Hangfire;
@@ -24,9 +23,8 @@ using Microsoft.Extensions.Options;
 using Serilog;
 
 // Startup-failure logger only; the configured pipeline logger is built by AddObservability.
-Log.Logger = new LoggerConfiguration()
-    .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture)
-    .CreateLogger();
+// JSON to stdout, synchronous, so a Fatal line is always flushed by CloseAndFlushAsync below (LOG-05).
+Log.Logger = LoggingSetup.CreateBootstrapLogger();
 
 try
 {
@@ -34,8 +32,8 @@ try
     // --environment passed by WebApplicationFactory) runs the web app.
     return args.FirstOrDefault() switch
     {
-        MigrateCommand.Verb => await MigrateCommand.RunAsync(args),
-        GrantRoleVerb.Verb => await GrantRoleVerb.RunAsync(args),
+        MigrateCommand.Verb => await RunVerbAsync(MigrateCommand.RunAsync, args),
+        GrantRoleVerb.Verb => await RunVerbAsync(GrantRoleVerb.RunAsync, args),
         _ => await RunWebAsync(args),
     };
 }
@@ -55,6 +53,15 @@ catch (Exception ex) when (ex is not HostAbortedException)
 finally
 {
     await Log.CloseAndFlushAsync();
+}
+
+// One correlation id per verb invocation (S6). Never wraps RunWebAsync: web lines get their id per request.
+static async Task<int> RunVerbAsync(Func<string[], Task<int>> verb, string[] args)
+{
+    using (CliLogContext.BeginInvocation())
+    {
+        return await verb(args);
+    }
 }
 
 static async Task<int> RunWebAsync(string[] args)

@@ -7,9 +7,10 @@ using Microsoft.Net.Http.Headers;
 namespace Acme.Service.BuildingBlocks.Web.Results;
 
 /// <summary>
-/// Converts use-case results to HTTP results (plan §0.6, INV-18). Failures become RFC 7807
-/// <c>application/problem+json</c> with the error code in <c>code</c>; <c>traceId</c> and
-/// <c>correlationId</c> are added by the ProblemDetails setup (<see cref="ProblemDetailsSetup"/>).
+/// Converts use-case results to HTTP results (plan §0.6, INV-18, ADR-0017). Successes with a body are wrapped in an
+/// <see cref="ApiEnvelope"/>. Failures become RFC 7807 <c>application/problem+json</c> with the error code in <c>code</c>;
+/// <c>isSuccess</c>, <c>requestId</c>, <c>traceId</c> and <c>correlationId</c> are added by the ProblemDetails setup
+/// (<see cref="ProblemDetailsSetup"/>).
 /// </summary>
 public static class ResultHttpExtensions
 {
@@ -23,11 +24,11 @@ public static class ResultHttpExtensions
         return result.IsSuccess ? TypedResults.NoContent() : result.Error.ToProblemResult();
     }
 
-    /// <summary>Success: 200 OK with the value as the body. Failure: the mapped problem response.</summary>
+    /// <summary>Success: 200 OK with the value in an <see cref="ApiEnvelope"/>. Failure: the mapped problem response.</summary>
     public static IResult ToHttpResult<T>(this Result<T> result)
     {
         ArgumentNullException.ThrowIfNull(result);
-        return result.IsSuccess ? TypedResults.Ok(result.Value) : result.Error.ToProblemResult();
+        return result.IsSuccess ? EnvelopeResult.Wrap(TypedResults.Ok(result.Value)) : result.Error.ToProblemResult();
     }
 
     /// <summary>Success: the result of <paramref name="onSuccess"/> (for example 201 Created). Failure: the mapped problem response.</summary>
@@ -35,7 +36,7 @@ public static class ResultHttpExtensions
     {
         ArgumentNullException.ThrowIfNull(result);
         ArgumentNullException.ThrowIfNull(onSuccess);
-        return result.IsSuccess ? onSuccess(result.Value) : result.Error.ToProblemResult();
+        return result.IsSuccess ? EnvelopeResult.Wrap(onSuccess(result.Value)) : result.Error.ToProblemResult();
     }
 
     /// <summary>HTTP status for an <see cref="ErrorType"/>.</summary>

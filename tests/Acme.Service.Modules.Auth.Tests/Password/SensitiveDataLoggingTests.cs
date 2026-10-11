@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Acme.Service.Modules.Auth.Tests.Fixtures;
 using Acme.Service.Testing.Containers;
+using Acme.Service.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -53,9 +54,9 @@ public sealed class SensitiveDataLoggingTests(PostgresFixture postgres)
         var tokens = await client.LoginTokensAsync("secret@example.com", NewPassword);
         secrets.AddRange([tokens.AccessToken, tokens.RefreshToken]);
         using var setup = await client.MfaSetupAsync(tokens.AccessToken);
-        var key = (await setup.Content.ReadFromJsonAsync<MfaSetupBody>(Ct))!.SharedKey;
+        var key = (await setup.Content.ReadDataAsync<MfaSetupBody>(Ct))!.SharedKey;
         using var verify = await client.MfaVerifyAsync(tokens.AccessToken, Rfc6238.Code(key, clock.GetUtcNow()));
-        var codes = (await verify.Content.ReadFromJsonAsync<RecoveryCodesBody>(Ct))!.RecoveryCodes;
+        var codes = (await verify.Content.ReadDataAsync<RecoveryCodesBody>(Ct))!.RecoveryCodes;
         secrets.Add(key);
         secrets.AddRange(codes);
 
@@ -69,7 +70,7 @@ public sealed class SensitiveDataLoggingTests(PostgresFixture postgres)
         using (var complete = await client.LoginMfaAsync(mfaToken, recoveryCode: codes[0]))
         {
             complete.StatusCode.ShouldBe(HttpStatusCode.OK);
-            var signedIn = (await complete.Content.ReadFromJsonAsync<TokenBody>(Ct))!;
+            var signedIn = (await complete.Content.ReadDataAsync<TokenBody>(Ct))!;
             secrets.AddRange([signedIn.AccessToken, signedIn.RefreshToken]);
         }
 

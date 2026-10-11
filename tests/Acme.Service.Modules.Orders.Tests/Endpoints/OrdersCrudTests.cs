@@ -1,6 +1,7 @@
 using System.Net;
 using Acme.Service.Modules.Orders.Tests.Fixtures;
 using Acme.Service.Testing.Containers;
+using Acme.Service.Testing;
 using Shouldly;
 
 namespace Acme.Service.Modules.Orders.Tests.Endpoints;
@@ -284,7 +285,7 @@ public sealed class OrdersCrudTests(PostgresFixture postgres)
             (await OrdersTestHost.ProblemCodeAsync(response)).ShouldBe("validation_failed");
         }
 
-        var errors = (await OrdersTestHost.JsonAsync(badLine)).GetProperty("errors");
+        var errors = (await badLine.Content.ReadJsonAsync(Ct)).GetProperty("errors");
         errors.TryGetProperty("Lines[0].Quantity", out _).ShouldBeTrue();
         errors.TryGetProperty("Lines[0].UnitPrice", out _).ShouldBeTrue();
         (await host.ScalarAsync<long>("SELECT count(*) FROM orders.orders")).ShouldBe(0);

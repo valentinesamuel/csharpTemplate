@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Acme.Service.Testing.Containers;
+using Acme.Service.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Shouldly;
@@ -49,11 +50,11 @@ internal static class MfaTestHost
 
         using var setup = await client.MfaSetupAsync(tokens.AccessToken);
         setup.StatusCode.ShouldBe(HttpStatusCode.OK, await setup.Content.ReadAsStringAsync(Ct));
-        var key = (await setup.Content.ReadFromJsonAsync<MfaSetupBody>(Ct))!.SharedKey;
+        var key = (await setup.Content.ReadDataAsync<MfaSetupBody>(Ct))!.SharedKey;
 
         using var verify = await client.MfaVerifyAsync(tokens.AccessToken, Rfc6238.Code(key, clock.GetUtcNow()));
         verify.StatusCode.ShouldBe(HttpStatusCode.OK, await verify.Content.ReadAsStringAsync(Ct));
-        var codes = (await verify.Content.ReadFromJsonAsync<RecoveryCodesBody>(Ct))!.RecoveryCodes;
+        var codes = (await verify.Content.ReadDataAsync<RecoveryCodesBody>(Ct))!.RecoveryCodes;
 
         clock.Advance(Rfc6238.Step);
         return (userId, key, codes);

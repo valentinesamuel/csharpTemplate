@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Acme.Service.Modules.Auth.Tests.Fixtures;
 using Acme.Service.Testing.Containers;
+using Acme.Service.Testing;
 using Shouldly;
 
 namespace Acme.Service.Modules.Auth.Tests.Password;
@@ -44,9 +45,9 @@ public sealed class PasswordResetTests(PostgresFixture postgres)
         known.StatusCode.ShouldBe(HttpStatusCode.Accepted);
         var bodies = new[]
         {
-            await unknown.Content.ReadAsStringAsync(Ct),
-            await unconfirmed.Content.ReadAsStringAsync(Ct),
-            await known.Content.ReadAsStringAsync(Ct),
+            (await unknown.Content.ReadDataElementAsync(Ct)).GetRawText(),
+            (await unconfirmed.Content.ReadDataElementAsync(Ct)).GetRawText(),
+            (await known.Content.ReadDataElementAsync(Ct)).GetRawText(),
         };
         bodies.Distinct(StringComparer.Ordinal).ShouldHaveSingleItem().ShouldContain("further instructions");
         reset.Subject.ShouldBe("Reset your password");

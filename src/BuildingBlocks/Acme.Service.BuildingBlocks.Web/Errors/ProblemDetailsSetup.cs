@@ -8,8 +8,8 @@ using Microsoft.Extensions.Hosting;
 namespace Acme.Service.BuildingBlocks.Web.Errors;
 
 /// <summary>
-/// Uniform RFC 7807 error model (INV-18): every problem response carries <c>code</c>, <c>traceId</c>
-/// and <c>correlationId</c>; exception details never leave the process outside Development.
+/// Uniform RFC 7807 error model (INV-18): every problem response carries <c>code</c>, <c>isSuccess</c>,
+/// <c>requestId</c>, <c>traceId</c> and <c>correlationId</c>; exception details never leave the process outside Development.
 /// </summary>
 public static class ProblemDetailsSetup
 {
@@ -21,6 +21,12 @@ public static class ProblemDetailsSetup
 
     /// <summary>ProblemDetails extension holding the correlation id.</summary>
     public const string CorrelationIdKey = "correlationId";
+
+    /// <summary>ProblemDetails extension that is always <see langword="false"/>, mirroring the success envelope.</summary>
+    public const string IsSuccessKey = "isSuccess";
+
+    /// <summary>ProblemDetails extension holding the alphanumeric request id.</summary>
+    public const string RequestIdKey = RequestId.PropertyName;
 
     /// <summary>Registers <see cref="IProblemDetailsService"/> with the uniform extensions.</summary>
     public static IServiceCollection AddProblemDetailsSetup(this IServiceCollection services)
@@ -48,10 +54,11 @@ public static class ProblemDetailsSetup
             problem.Extensions[CodeKey] = CodeFor(status);
         }
 
-        problem.Extensions[TraceIdKey] = Activity.Current?.TraceId.ToHexString() ?? http.TraceIdentifier;
-        problem.Extensions[CorrelationIdKey] =
-            http.RequestServices.GetService<ICorrelationIdAccessor>()?.CorrelationId
-            ?? http.Response.Headers[CorrelationId.HeaderName].ToString();
+        var (requestId, correlationId) = RequestId.Of(http);
+        problem.Extensions[IsSuccessKey] = false;
+        problem.Extensions[RequestIdKey] = requestId;
+        problem.Extensions[TraceIdKey] = Activity.Current?.TraceId.ToHexString() ?? requestId;
+        problem.Extensions[CorrelationIdKey] = correlationId;
 
         var environment = http.RequestServices.GetService<IHostEnvironment>();
         if (context.Exception is not null && environment?.IsDevelopment() != true)

@@ -5,6 +5,7 @@ using System.Text.Json;
 using Acme.Service.Host.Commands;
 using Acme.Service.Host.Modules;
 using Acme.Service.Modules.Auth;
+using Acme.Service.Testing;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Npgsql;
 using Shouldly;
@@ -178,18 +179,20 @@ internal sealed class ServiceApi(IntegrationWebFactory factory)
         return new TokenPair(body.GetProperty("accessToken").GetString()!, body.GetProperty("refreshToken").GetString()!);
     }
 
-    /// <summary>The response body as a detached JSON element.</summary>
+    /// <summary>The <c>data</c> of the success envelope as a detached JSON element.</summary>
     public static async Task<JsonElement> JsonAsync(HttpResponseMessage response)
     {
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
-        return document.RootElement.Clone();
+        return await response.Content.ReadDataElementAsync(Ct);
     }
 
     /// <summary>The <c>code</c> extension of a problem response, asserting the RFC 7807 shape (INV-18).</summary>
     public static async Task<string?> ProblemCodeAsync(HttpResponseMessage response)
     {
         response.Content.Headers.ContentType?.MediaType.ShouldBe("application/problem+json");
-        var body = await JsonAsync(response);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        var body = document.RootElement;
+        body.GetProperty("isSuccess").GetBoolean().ShouldBeFalse();
+        body.TryGetProperty("requestId", out _).ShouldBeTrue();
         body.TryGetProperty("traceId", out _).ShouldBeTrue();
         body.TryGetProperty("correlationId", out _).ShouldBeTrue();
         return body.TryGetProperty("code", out var code) ? code.GetString() : null;
