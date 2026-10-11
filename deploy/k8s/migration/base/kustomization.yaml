@@ -1,0 +1,28 @@
+# Base for the one-shot migration Job (plan P21, INV-16). Not applied directly: use migration/overlays/<env>.
+# Self-contained: it generates its own ConfigMap (acme-service-migrate-config) so the app's ConfigMap does not have to
+# exist first, and it never overwrites the app's ConfigMap. Overlays merge the same Jobs__Provider as the app overlay.
+# Secrets are referenced only (INV-11): acme-service-secrets and acme-service-migrations-secrets are created externally.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: acme-service
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false
+    includeTemplates: true
+
+resources:
+  - job.yaml
+
+configMapGenerator:
+  - name: acme-service-migrate-config
+    options:
+      labels:
+        app.kubernetes.io/name: acme-service
+        app.kubernetes.io/component: migrate
+    literals:
+      - ASPNETCORE_ENVIRONMENT=Production
+      # Jobs__Provider=Hangfire makes `migrate` install the Hangfire schema too.
+      - Jobs__Provider=Hangfire
+# The image tag is set by each overlay via `images:` (name acme-service).

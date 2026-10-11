@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- The optional dashboard (HangfireDashboardExtensions) maps ASP.NET Core endpoints. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Hangfire.AspNetCore" />
+    <PackageReference Include="Hangfire.Core" />
+    <PackageReference Include="Hangfire.PostgreSql" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Acme.Service.BuildingBlocks\Acme.Service.BuildingBlocks.csproj" />
+    <!-- Plan §0.3: allowed for the migration hook only (IPostMigrationStep, ConnectionStringNames). -->
+    <ProjectReference Include="..\..\Acme.Service.BuildingBlocks.Persistence\Acme.Service.BuildingBlocks.Persistence.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Acme.Service.Infra.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Deliberately ILLEGAL assembly (plan P18): it references a module's non-Contracts project and uses its public
+    module type from a namespace that impersonates another module. It exists only so that
+    IllegalReferenceProofTests can prove rule R1 detects the violation. Referenced ONLY by
+    Acme.Service.ArchitectureTests; never reference it from src/ (enforced by IllegalReferenceProofTests).
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Modules\Auth\Acme.Service.Modules.Auth\Acme.Service.Modules.Auth.csproj" />
+  </ItemGroup>
+
+</Project>

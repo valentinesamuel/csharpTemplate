@@ -1,0 +1,190 @@
+# Local development stack for Acme.Service (plan P20).
+#
+#   dotnet run scripts/dev-env.cs                                   # once: writes deploy/compose/.env (gitignored)
+#   docker compose -f deploy/compose/compose.yaml up -d --build     # postgres, redis, s3, azurite, mailpit, migrate, app
+#   docker compose -f deploy/compose/compose.yaml --profile observability up -d   # + Aspire dashboard (OTLP sink)
+#   docker compose -f deploy/compose/compose.yaml down -v           # tear down, including data volumes
+#
+# Every credential comes from .env (INV-11). The single exception is the Azurite well-known development account key
+# below, which is public (documented by Microsoft), only works against the local emulator and is allowlisted in
+# /.gitleaks.toml. Schema changes happen only in the one-shot `migrate` service (INV-16); the app never migrates.
+# Host ports are bound to 127.0.0.1 and can be moved with the *_PORT variables in .env when they clash.
+name: acme-service
+
+x-app-build: &app-build
+  context: ../..
+  dockerfile: Dockerfile
+
+x-postgres-connection: &postgres-connection
+  ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=acme_service;Username=postgres;Password=${POSTGRES_PASSWORD:?run 'dotnet run scripts/dev-env.cs' first}"
+  ConnectionStrings__PostgresMigrations: "Host=postgres;Port=5432;Database=acme_service;Username=postgres;Password=${POSTGRES_PASSWORD:?run 'dotnet run scripts/dev-env.cs' first}"
+
+services:
+  postgres:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_DB: acme_service
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run 'dotnet run scripts/dev-env.cs' first}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d acme_service"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.8.3-alpine
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --save '' --appendonly no"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?run 'dotnet run scripts/dev-env.cs' first}
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # S3-compatible object store. WH-41: MinIO server images are no longer pullable (docker.io/minio/minio does not exist,
+  # quay.io/minio/minio is unauthorized), so RustFS is used, as in the integration tests. Path-style addressing is required.
+  rustfs:
+    image: rustfs/rustfs:1.0.1
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ROOT_USER:?run 'dotnet run scripts/dev-env.cs' first}
+      RUSTFS_SECRET_KEY: ${S3_ROOT_PASSWORD:?run 'dotnet run scripts/dev-env.cs' first}
+    ports:
+      - "127.0.0.1:${S3_PORT:-9000}:9000"
+    volumes:
+      - rustfs-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/health/ready >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # One-shot: creates the bucket the app uses (Blob:S3:Bucket).
+  rustfs-init:
+    image: rustfs/rc:v0.1.36
+    entrypoint: ["sh", "-c"]
+    command:
+      - rc alias set local http://rustfs:9000 "$$S3_ROOT_USER" "$$S3_ROOT_PASSWORD" && rc bucket create --ignore-existing local/${S3_BUCKET:-acme-service-blobs}
+    environment:
+      S3_ROOT_USER: ${S3_ROOT_USER}
+      S3_ROOT_PASSWORD: ${S3_ROOT_PASSWORD}
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    restart: "no"
+
+  # Azure Blob emulator for Blob__Provider=AzureBlob (see .env.example). Uses the public well-known dev account.
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0
+    command: ["azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", "10000", "--location", "/data", "--skipApiVersionCheck", "--loose"]
+    ports:
+      - "127.0.0.1:${AZURITE_BLOB_PORT:-10000}:10000"
+    volumes:
+      - azurite-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 10000"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:v1.31.4
+    ports:
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # One-shot: applies every module's migrations, the Hangfire schema and the Auth seed (INV-16), then exits 0.
+  migrate:
+    image: acme-service:local
+    build: *app-build
+    command: ["migrate"]
+    environment:
+      <<: *postgres-connection
+      Jobs__Provider: Hangfire
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # The chiseled runtime image has no shell or curl, so the app has no container healthcheck: use
+  # `curl localhost:${APP_PORT:-8080}/health/ready` (readiness also fails while migrations are pending).
+  app:
+    image: acme-service:local
+    build: *app-build
+    env_file:
+      - .env
+    environment:
+      <<: *postgres-connection
+      ASPNETCORE_ENVIRONMENT: Production
+      Cache__Provider: Redis
+      Cache__Redis__ConnectionString: "redis:6379,password=${REDIS_PASSWORD}"
+      Blob__Provider: ${BLOB_PROVIDER:-S3}
+      Blob__S3__ServiceUrl: http://rustfs:9000
+      Blob__S3__Region: us-east-1
+      Blob__S3__Bucket: ${S3_BUCKET:-acme-service-blobs}
+      Blob__S3__AccessKey: ${S3_ROOT_USER}
+      Blob__S3__SecretKey: ${S3_ROOT_PASSWORD}
+      Blob__S3__ForcePathStyle: "true"
+      Blob__AzureBlob__ConnectionString: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;"
+      Blob__AzureBlob__Container: acme-service-blobs
+      Blob__AzureBlob__CreateIfMissing: "true"
+      Notifications__Provider: Smtp
+      Notifications__Smtp__Host: mailpit
+      Notifications__Smtp__Port: "1025"
+      Notifications__Smtp__UseStartTls: "false"
+      Notifications__Smtp__From: no-reply@acme-service.local
+      Jobs__Provider: Hangfire
+      Locks__Provider: Postgres
+      Auth__Links__ConfirmEmailUrl: ${AUTH_CONFIRM_EMAIL_URL:-http://localhost:3000/confirm-email}
+      Auth__Links__ResetPasswordUrl: ${AUTH_RESET_PASSWORD_URL:-http://localhost:3000/reset-password}
+      Observability__Otlp__Endpoint: ${OTLP_ENDPOINT:-}
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_healthy
+      azurite:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # OTLP sink for traces, metrics and logs (WH-45). Set OTLP_ENDPOINT=http://aspire-dashboard:18889 in .env and start
+  # with --profile observability. Anonymous access is for local use only; the dashboard is bound to 127.0.0.1.
+  aspire-dashboard:
+    profiles: ["observability"]
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:9.5.2
+    environment:
+      DASHBOARD__FRONTEND__AUTHMODE: Unsecured
+      DASHBOARD__OTLP__AUTHMODE: Unsecured
+    ports:
+      - "127.0.0.1:${ASPIRE_UI_PORT:-18888}:18888"
+      - "127.0.0.1:${ASPIRE_OTLP_PORT:-18889}:18889"
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  rustfs-data:
+  azurite-data:

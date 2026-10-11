@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="NSubstitute" />
     <PackageReference Include="Shouldly" />
@@ -20,6 +21,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\BuildingBlocks\Acme.Service.BuildingBlocks\Acme.Service.BuildingBlocks.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Acme.Service.BuildingBlocks.Persistence\Acme.Service.BuildingBlocks.Persistence.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Acme.Service.BuildingBlocks.Web\Acme.Service.BuildingBlocks.Web.csproj" />
     <ProjectReference Include="..\Acme.Service.Testing\Acme.Service.Testing.csproj" />
   </ItemGroup>
 

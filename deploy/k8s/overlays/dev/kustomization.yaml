@@ -1,0 +1,47 @@
+# Acme.Service web app, dev environment. Apply AFTER the migration Job completed (see deploy/k8s/README.md).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: acme-service-dev
+
+labels:
+  - pairs:
+      app.kubernetes.io/instance: acme-service-dev
+    includeSelectors: false
+    includeTemplates: true
+
+resources:
+  - ../../base
+
+images:
+  - name: acme-service
+    newName: registry.example.com/your-org/acme-service
+    newTag: "dev"
+
+replicas:
+  - name: acme-service
+    count: 1
+
+patches:
+  - path: config-patch.yaml
+  - path: deployment-patch.yaml
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: acme-service
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+  # A single replica with minAvailable 1 would block node drains: allow one disruption in dev.
+  - target:
+      kind: PodDisruptionBudget
+      name: acme-service
+    patch: |-
+      - op: remove
+        path: /spec/minAvailable
+      - op: add
+        path: /spec/maxUnavailable
+        value: 1

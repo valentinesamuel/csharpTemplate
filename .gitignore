@@ -8,6 +8,9 @@ deploy/compose/.env
 .claude/settings.local.json
 TestResults/
 coverage/
+.codex/
+/claude/
+.agents/
 
 # Build and tooling output
 artifacts/
@@ -25,3 +28,9 @@ coverage*.info
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Local blob store (Blob:Provider=Local, Development)
+.data/
+
+# dotnet publish output used in the cookbook
+out/

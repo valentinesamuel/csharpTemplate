@@ -100,6 +100,23 @@ dotnet_naming_rule.types_and_members_pascal.severity = warning
 
 dotnet_diagnostic.IDE1006.severity = warning
 
+[src/BuildingBlocks/Acme.Service.BuildingBlocks/**.cs]
+# CA1711: plan §0.6 fixes the port names IJobQueue and IIntegrationEventHandler<TEvent>; allow only these two suffixes.
+dotnet_code_quality.CA1711.allowed_suffixes = Queue|EventHandler
+
+[src/BuildingBlocks/Acme.Service.BuildingBlocks/Results/Error.cs]
+# CA1716: plan §0.6 fixes the type name Error(code, message, ErrorType); 'Error' is a VB keyword, C# only here.
+dotnet_diagnostic.CA1716.severity = none
+
 [tests/**.cs]
 # CA1707: plan §0.5 mandates Method_Scenario_Expected test names, which require underscores.
 dotnet_diagnostic.CA1707.severity = none
+
+[src/Modules/**/Migrations/*.cs]
+# EF Core tooling generates these files (block namespaces, BOM, #nullable disable); treat them as generated so analyzers and dotnet format skip them.
+# Scoped to module and test migrations only, so hand-written code in BuildingBlocks.Persistence/Migrations stays analyzed.
+generated_code = true
+
+[tests/**/Migrations/*.cs]
+# EF Core tooling generates these files (same justification as above).
+generated_code = true

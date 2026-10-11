@@ -1,0 +1,62 @@
+# Dependabot (plan P22). Versions stay pinned; Dependabot proposes the bumps.
+# - nuget: Central Package Management aware (updates Directory.Packages.props and regenerates packages.lock.json).
+#   CI restores with --locked-mode, so a bump PR is only green once its lock files are consistent (INV-20).
+# - github-actions: bumps the SHA pins and their "# vX.Y.Z" comments in .github/workflows.
+# - docker: base images in the root Dockerfile (tags and, once added, digests).
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels: [dependencies, nuget]
+    commit-message:
+      prefix: "deps(nuget)"
+    groups:
+      microsoft-dotnet:
+        patterns:
+          - "Microsoft.*"
+          - "System.*"
+        update-types: [minor, patch]
+      opentelemetry:
+        patterns:
+          - "OpenTelemetry*"
+      testing:
+        patterns:
+          - "xunit*"
+          - "Microsoft.NET.Test.Sdk"
+          - "coverlet.*"
+          - "Shouldly"
+          - "NSubstitute"
+          - "Testcontainers*"
+          - "NetArchTest*"
+    ignore:
+      # INV-25: these went commercial in later majors and must never be introduced or upgraded into.
+      - dependency-name: "FluentAssertions"
+      - dependency-name: "MediatR"
+      - dependency-name: "AutoMapper"
+      - dependency-name: "Moq"
+      - dependency-name: "MassTransit"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, github-actions]
+    commit-message:
+      prefix: "deps(actions)"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: "deps(docker)"

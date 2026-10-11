@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- ASP.NET Core Identity (UserManager, RoleManager, SignInManager) and Data Protection. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- INV-05 / ADR-0005: the Auth module uses EF Core and Identity directly. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\BuildingBlocks\Acme.Service.BuildingBlocks\Acme.Service.BuildingBlocks.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\Acme.Service.BuildingBlocks.Persistence\Acme.Service.BuildingBlocks.Persistence.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\Acme.Service.BuildingBlocks.Web\Acme.Service.BuildingBlocks.Web.csproj" />
+    <ProjectReference Include="..\Acme.Service.Modules.Auth.Contracts\Acme.Service.Modules.Auth.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Acme.Service.Modules.Auth.Tests" />
+  </ItemGroup>
+
+</Project>

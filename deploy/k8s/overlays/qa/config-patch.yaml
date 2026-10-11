@@ -1,0 +1,20 @@
+# Non-secret, qa-specific configuration (INV-11). Credentials live in Secret acme-service-secrets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: acme-service-config
+data:
+  Cache__Provider: Redis
+  # S3 (or AzureBlob with Blob__AzureBlob__ServiceUri/Container). Never Local: the root filesystem is read-only (D-21).
+  Blob__Provider: S3
+  Blob__S3__Region: eu-west-1
+  Blob__S3__Bucket: acme-service-qa-blobs
+  Notifications__Provider: Smtp
+  Notifications__Smtp__Host: smtp.example.com
+  Notifications__Smtp__Port: "587"
+  Notifications__Smtp__UseStartTls: "true"
+  Notifications__Smtp__From: no-reply@qa.example.com
+  Jobs__Provider: Hangfire
+  Locks__Provider: Postgres
+  Auth__Links__ConfirmEmailUrl: https://app.qa.example.com/confirm-email
+  Auth__Links__ResetPasswordUrl: https://app.qa.example.com/reset-password

@@ -1,0 +1,146 @@
+# Template self-test (plan P23, INV-23). Proves that scripts/init.cs turns a copy of this repository into a working,
+# fully renamed service: restore, format, Release build and the unit + architecture tests are green, and no trace of
+# the template name is left. Runs once with the Orders sample kept and once with --remove-sample.
+# Supply chain: actions are pinned to the same full commit SHAs as ci.yml (version in the trailing comment).
+# Secrets: this workflow uses no repository secrets (INV-11).
+# The template vendor name is assembled with format() so this file holds no occurrence of it outside the tokens
+# (INV-23); otherwise init would leave it behind. In a service generated from the template the template solution no
+# longer exists, so the detect job turns the self-test off there.
+name: Template self-test
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: template-selftest-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+  SELFTEST_NAME: Contoso.Billing
+  TEMPLATE_VENDOR: ${{ format('{0}{1}', 'ac', 'me') }}
+
+jobs:
+  detect:
+    name: Detect template
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      is-template: ${{ steps.detect.outputs.is-template }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Is this the uninitialized template?
+        id: detect
+        run: |
+          if [[ -f "${TEMPLATE_VENDOR^}.Service.slnx" ]]; then
+            echo "is-template=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is-template=false" >> "$GITHUB_OUTPUT"
+            echo "Template solution not found: this repository is already initialized; the self-test is skipped."
+          fi
+
+  selftest:
+    name: Init ${{ matrix.variant }}
+    needs: detect
+    if: ${{ needs.detect.outputs.is-template == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: keep-sample
+            init-args: ""
+          - variant: remove-sample
+            init-args: --remove-sample
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET SDK (global.json)
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/packages.lock.json', 'Directory.Packages.props', 'global.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      # The copy has no .git, so init cannot verify a clean tree; --force is expected here (and only here).
+      - name: Copy the repository to a scratch directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/selftest"
+          cp -a . "$RUNNER_TEMP/selftest/"
+          rm -rf "$RUNNER_TEMP/selftest/.git"
+
+      - name: Run init
+        working-directory: ${{ runner.temp }}/selftest
+        env:
+          INIT_ARGS: ${{ matrix.init-args }}
+        run: |
+          # shellcheck disable=SC2086 # INIT_ARGS is empty or a single flag
+          dotnet run scripts/init.cs -- --name "$SELFTEST_NAME" --force $INIT_ARGS
+          test ! -e "${TEMPLATE_VENDOR^}.Service.slnx"
+          test -f "$SELFTEST_NAME.slnx"
+
+      # Project names changed, so the lock files are regenerated (P23 failure mode "lock files").
+      - name: Restore (force-evaluate)
+        working-directory: ${{ runner.temp }}/selftest
+        run: dotnet restore "$SELFTEST_NAME.slnx" --force-evaluate
+
+      # The renamed root namespace sorts differently among using directives; init's next steps include 'dotnet format'.
+      - name: Format, then verify formatting
+        working-directory: ${{ runner.temp }}/selftest
+        run: |
+          dotnet format "$SELFTEST_NAME.slnx" --no-restore
+          dotnet format "$SELFTEST_NAME.slnx" --verify-no-changes --no-restore
+
+      - name: Build (Release)
+        working-directory: ${{ runner.temp }}/selftest
+        run: dotnet build "$SELFTEST_NAME.slnx" -c Release --no-restore
+
+      - name: Unit and architecture tests
+        working-directory: ${{ runner.temp }}/selftest
+        run: dotnet test "$SELFTEST_NAME.slnx" -c Release --no-build --filter "Category!=Integration"
+
+      - name: Assert no template name remains
+        working-directory: ${{ runner.temp }}/selftest
+        run: |
+          leftovers="$(grep -rIil "$TEMPLATE_VENDOR" . --exclude-dir=.git || true)"
+          if [[ -n "$leftovers" ]]; then
+            echo "::error title=Template name left after init::These files still mention the template name (INV-23):"
+            echo "$leftovers"
+            exit 1
+          fi
+          echo "No occurrence left."
+
+      - name: Assert the sample module is gone
+        if: ${{ matrix.variant == 'remove-sample' }}
+        working-directory: ${{ runner.temp }}/selftest
+        run: |
+          modules="$(ls src/Modules)"
+          echo "src/Modules: $modules"
+          if [[ "$modules" != "Auth" ]]; then
+            echo "::error title=Sample not removed::src/Modules must contain only Auth after --remove-sample."
+            exit 1
+          fi
+          if compgen -G 'tests/*Orders*' > /dev/null; then
+            echo "::error title=Sample not removed::The Orders test project is still present."
+            exit 1
+          fi

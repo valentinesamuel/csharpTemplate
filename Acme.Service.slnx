@@ -5,11 +5,38 @@
     <Project Path="src/BuildingBlocks/Acme.Service.BuildingBlocks.Web/Acme.Service.BuildingBlocks.Web.csproj" />
     <Project Path="src/BuildingBlocks/Acme.Service.BuildingBlocks/Acme.Service.BuildingBlocks.csproj" />
   </Folder>
+  <Folder Name="/src/BuildingBlocks/Infra/">
+    <Project Path="src/BuildingBlocks/Infra/Acme.Service.BuildingBlocks.Infra.AzureBlob/Acme.Service.BuildingBlocks.Infra.AzureBlob.csproj" />
+    <Project Path="src/BuildingBlocks/Infra/Acme.Service.BuildingBlocks.Infra.Hangfire/Acme.Service.BuildingBlocks.Infra.Hangfire.csproj" />
+    <Project Path="src/BuildingBlocks/Infra/Acme.Service.BuildingBlocks.Infra.InMemory/Acme.Service.BuildingBlocks.Infra.InMemory.csproj" />
+    <Project Path="src/BuildingBlocks/Infra/Acme.Service.BuildingBlocks.Infra.Redis/Acme.Service.BuildingBlocks.Infra.Redis.csproj" />
+    <Project Path="src/BuildingBlocks/Infra/Acme.Service.BuildingBlocks.Infra.S3/Acme.Service.BuildingBlocks.Infra.S3.csproj" />
+    <Project Path="src/BuildingBlocks/Infra/Acme.Service.BuildingBlocks.Infra.Smtp/Acme.Service.BuildingBlocks.Infra.Smtp.csproj" />
+  </Folder>
   <Folder Name="/src/Host/">
     <Project Path="src/Host/Acme.Service.Host/Acme.Service.Host.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/" />
+  <Folder Name="/src/Modules/Auth/">
+    <Project Path="src/Modules/Auth/Acme.Service.Modules.Auth.Contracts/Acme.Service.Modules.Auth.Contracts.csproj" />
+    <Project Path="src/Modules/Auth/Acme.Service.Modules.Auth/Acme.Service.Modules.Auth.csproj" />
+  </Folder>
+  <!-- <sample:orders> -->
+  <Folder Name="/src/Modules/Orders/">
+    <Project Path="src/Modules/Orders/Acme.Service.Modules.Orders.Contracts/Acme.Service.Modules.Orders.Contracts.csproj" />
+    <Project Path="src/Modules/Orders/Acme.Service.Modules.Orders/Acme.Service.Modules.Orders.csproj" />
+  </Folder>
+  <!-- </sample:orders> -->
   <Folder Name="/tests/">
+    <Project Path="tests/Acme.Service.ArchitectureTests.Fixtures.IllegalReference/Acme.Service.ArchitectureTests.Fixtures.IllegalReference.csproj" />
+    <Project Path="tests/Acme.Service.ArchitectureTests/Acme.Service.ArchitectureTests.csproj" />
     <Project Path="tests/Acme.Service.BuildingBlocks.Tests/Acme.Service.BuildingBlocks.Tests.csproj" />
+    <Project Path="tests/Acme.Service.Infra.Tests/Acme.Service.Infra.Tests.csproj" />
+    <Project Path="tests/Acme.Service.IntegrationTests/Acme.Service.IntegrationTests.csproj" />
+    <Project Path="tests/Acme.Service.Modules.Auth.Tests/Acme.Service.Modules.Auth.Tests.csproj" />
+    <!-- <sample:orders> -->
+    <Project Path="tests/Acme.Service.Modules.Orders.Tests/Acme.Service.Modules.Orders.Tests.csproj" />
+    <!-- </sample:orders> -->
     <Project Path="tests/Acme.Service.Testing/Acme.Service.Testing.csproj" />
   </Folder>
 </Solution>

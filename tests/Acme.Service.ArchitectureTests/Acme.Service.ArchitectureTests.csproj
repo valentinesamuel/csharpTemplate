@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="NetArchTest.Rules" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="xunit.v3.mtp-off" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The Host references every src/ project, so every module, Contracts, BuildingBlocks and Infra assembly is
+         copied to the output directory and can be loaded by name; no module is referenced by name here. -->
+    <ProjectReference Include="..\..\src\Host\Acme.Service.Host\Acme.Service.Host.csproj" />
+    <!-- The deliberately illegal assembly; this is the only project allowed to reference it. -->
+    <ProjectReference Include="..\Acme.Service.ArchitectureTests.Fixtures.IllegalReference\Acme.Service.ArchitectureTests.Fixtures.IllegalReference.csproj" />
+  </ItemGroup>
+
+</Project>

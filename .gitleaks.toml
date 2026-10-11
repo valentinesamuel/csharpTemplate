@@ -1,0 +1,27 @@
+# gitleaks configuration (plan P20, WH-30). Run with the CLI container, not gitleaks-action:
+#   docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.0 detect --source /repo --no-git -c /repo/.gitleaks.toml
+title = "Acme.Service gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public Azurite dev key, throw-away test fixtures, generated/ignored paths"
+regexes = [
+  # Azurite well-known development storage account key (public, published by Microsoft; emulator only, INV-11).
+  '''Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==''',
+  # The character set scripts/dev-env.cs draws generated passwords from (a constant, not a credential).
+  '''^ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789$''',
+]
+paths = [
+  # Throw-away credentials of disposable test containers and generated test keys.
+  '''tests/.*''',
+  # Local, gitignored secrets are never committed; keep them out of --no-git scans of a working copy.
+  '''deploy/compose/\.env$''',
+  # Build output and agent scratch space.
+  '''(^|/)(bin|obj)/.*''',
+  '''\.claude/.*''',
+  '''\.agents/.*''',
+  '''\.codex/.*''',
+  '''packages\.lock\.json$''',
+]

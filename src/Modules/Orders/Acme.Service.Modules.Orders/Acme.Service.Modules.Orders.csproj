@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- Minimal API endpoints (IEndpoint) and endpoint authorization. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- D-01 / INV-04: EF Core arrives through BuildingBlocks.Persistence and is used only under Persistence/. -->
+    <ProjectReference Include="..\..\..\BuildingBlocks\Acme.Service.BuildingBlocks\Acme.Service.BuildingBlocks.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\Acme.Service.BuildingBlocks.Persistence\Acme.Service.BuildingBlocks.Persistence.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\Acme.Service.BuildingBlocks.Web\Acme.Service.BuildingBlocks.Web.csproj" />
+    <ProjectReference Include="..\Acme.Service.Modules.Orders.Contracts\Acme.Service.Modules.Orders.Contracts.csproj" />
+    <!-- INV-01: Auth is reached only through its Contracts (IUserDirectory, UserRegisteredV1). -->
+    <ProjectReference Include="..\..\Auth\Acme.Service.Modules.Auth.Contracts\Acme.Service.Modules.Auth.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Acme.Service.Modules.Orders.Tests" />
+  </ItemGroup>
+
+</Project>

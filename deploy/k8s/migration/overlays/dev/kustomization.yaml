@@ -1,0 +1,42 @@
+# Migration Job, dev environment. Apply BEFORE the app overlay and wait for completion (see deploy/k8s/README.md).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: acme-service-dev
+
+labels:
+  - pairs:
+      app.kubernetes.io/instance: acme-service-dev
+    includeSelectors: false
+    includeTemplates: true
+
+resources:
+  - ../../base
+
+# Must match the app image tag in deploy/k8s/overlays/dev.
+images:
+  - name: acme-service
+    newName: registry.example.com/your-org/acme-service
+    newTag: "dev"
+
+# Same Jobs__Provider as deploy/k8s/overlays/dev/config-patch.yaml.
+configMapGenerator:
+  - name: acme-service-migrate-config
+    behavior: merge
+    literals:
+      - Jobs__Provider=Hangfire
+
+patches:
+  - target:
+      kind: Job
+      name: acme-service-migrate
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi

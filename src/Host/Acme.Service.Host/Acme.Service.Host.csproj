@@ -1,9 +1,47 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
+  <PropertyGroup>
+    <!-- Development secrets (signing key, connection strings) via 'dotnet user-secrets'; see scripts/dev-env.cs. -->
+    <UserSecretsId>acme-service</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <!-- dotnet ef uses the Host as the startup project (module migrations); design-time only, not flowed to consumers. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+    <PackageReference Include="Scalar.AspNetCore" />
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Sinks.OpenTelemetry" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\BuildingBlocks\Acme.Service.BuildingBlocks\Acme.Service.BuildingBlocks.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\Acme.Service.BuildingBlocks.Web\Acme.Service.BuildingBlocks.Web.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\Acme.Service.BuildingBlocks.Persistence\Acme.Service.BuildingBlocks.Persistence.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Infra\Acme.Service.BuildingBlocks.Infra.AzureBlob\Acme.Service.BuildingBlocks.Infra.AzureBlob.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Infra\Acme.Service.BuildingBlocks.Infra.Hangfire\Acme.Service.BuildingBlocks.Infra.Hangfire.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Infra\Acme.Service.BuildingBlocks.Infra.InMemory\Acme.Service.BuildingBlocks.Infra.InMemory.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Infra\Acme.Service.BuildingBlocks.Infra.Redis\Acme.Service.BuildingBlocks.Infra.Redis.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Infra\Acme.Service.BuildingBlocks.Infra.S3\Acme.Service.BuildingBlocks.Infra.S3.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Infra\Acme.Service.BuildingBlocks.Infra.Smtp\Acme.Service.BuildingBlocks.Infra.Smtp.csproj" />
+    <ProjectReference Include="..\..\Modules\Auth\Acme.Service.Modules.Auth\Acme.Service.Modules.Auth.csproj" />
+    <!-- <sample:orders> -->
+    <ProjectReference Include="..\..\Modules\Orders\Acme.Service.Modules.Orders\Acme.Service.Modules.Orders.csproj" />
+    <!-- </sample:orders> -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Acme.Service.IntegrationTests" />
+    <InternalsVisibleTo Include="Acme.Service.Infra.Tests" />
+    <InternalsVisibleTo Include="Acme.Service.Modules.Auth.Tests" />
+    <!-- <sample:orders> -->
+    <InternalsVisibleTo Include="Acme.Service.Modules.Orders.Tests" />
+    <!-- </sample:orders> -->
   </ItemGroup>
 
 </Project>

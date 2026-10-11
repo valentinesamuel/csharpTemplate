@@ -1,0 +1,37 @@
+# Acme.Service web app, prod environment. Apply AFTER the migration Job completed (see deploy/k8s/README.md).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: acme-service-prod
+
+labels:
+  - pairs:
+      app.kubernetes.io/instance: acme-service-prod
+    includeSelectors: false
+    includeTemplates: true
+
+resources:
+  - ../../base
+
+images:
+  - name: acme-service
+    newName: registry.example.com/your-org/acme-service
+    newTag: "1.0.0"
+
+replicas:
+  - name: acme-service
+    count: 3
+
+patches:
+  - path: config-patch.yaml
+  - path: deployment-patch.yaml
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: acme-service
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 3
+      - op: replace
+        path: /spec/maxReplicas
+        value: 10

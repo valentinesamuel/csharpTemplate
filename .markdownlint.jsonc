@@ -1,0 +1,25 @@
+// markdownlint configuration for README.md and docs/ (plan P24).
+// Run: npx --yes markdownlint-cli2 "docs/**/*.md" README.md
+{
+  "default": true,
+
+  // Prose is wrapped by the editor, not at a fixed column; long table rows and commands are common.
+  "MD013": false,
+
+  // scripts/init.cs --remove-sample deletes whole <!-- <sample:orders> --> regions, which leaves two blank lines
+  // where a region used to be; allow that so the docs of an initialised service stay lint-clean.
+  "MD012": { "maximum": 2 },
+
+  // ADRs and architecture docs repeat section names such as "Consequences" under different parents.
+  "MD024": { "siblings_only": true },
+
+  // Ordered lists use 1. 2. 3. so the source reads like the rendered output.
+  "MD029": { "style": "ordered" },
+
+  // Fenced code blocks must name a language (bash, json, mermaid, text, ...).
+  "MD040": true,
+
+  // Emphasis and strong style consistency.
+  "MD049": { "style": "asterisk" },
+  "MD050": { "style": "asterisk" }
+}
