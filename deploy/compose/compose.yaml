@@ -39,7 +39,12 @@ services:
 
   redis:
     image: redis:8.8.3-alpine
-    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --save '' --appendonly no"]
+    command:
+      [
+        "sh",
+        "-c",
+        'exec redis-server --requirepass "$$REDIS_PASSWORD" --save '''' --appendonly no',
+      ]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?run 'dotnet run scripts/dev-env.cs' first}
       REDISCLI_AUTH: ${REDIS_PASSWORD}
@@ -64,7 +69,8 @@ services:
     volumes:
       - rustfs-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/health/ready >/dev/null"]
+      test:
+        ["CMD-SHELL", "curl -fsS http://localhost:9000/health/ready >/dev/null"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -87,7 +93,18 @@ services:
   # Azure Blob emulator for Blob__Provider=AzureBlob (see .env.example). Uses the public well-known dev account.
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:3.37.0
-    command: ["azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", "10000", "--location", "/data", "--skipApiVersionCheck", "--loose"]
+    command:
+      [
+        "azurite-blob",
+        "--blobHost",
+        "0.0.0.0",
+        "--blobPort",
+        "10000",
+        "--location",
+        "/data",
+        "--skipApiVersionCheck",
+        "--loose",
+      ]
     ports:
       - "127.0.0.1:${AZURITE_BLOB_PORT:-10000}:10000"
     volumes:
