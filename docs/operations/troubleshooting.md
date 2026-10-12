@@ -142,6 +142,10 @@ The runtime image is chiseled: no package manager, no curl, and no general-purpo
 - `docker compose exec app dotnet Acme.Service.Host.dll auth:grant-role --email <email> --role <role>` (or your platform's equivalent) is the only verb that runs in the app container (it uses `ConnectionStrings:Postgres`); `migrate` and `migrate --list` need the migrator identity's connection string (see [readiness returns 503](#readiness-returns-503)), and `exec` shares the container's memory limit ([deployment](deployment.md#after-the-first-deployment));
 - locally, `docker compose -f deploy/compose/compose.yaml logs -f app` and `docker compose -f deploy/compose/compose.yaml ps` (the `migrate` service should show `Exited (0)`).
 
+## `docker build` fails with NETSDK1064 (package not found)
+
+`error NETSDK1064: Package ... was not found. It might have been deleted since NuGet restore` during `dotnet publish` means the image's restore layer is cached but the packages it points at are gone, usually because Docker's build cache was pruned or a build was interrupted. The Dockerfile keeps the package store in the restore layer, so a clean rebuild fixes it: `docker build --no-cache -t acme-service:<tag> .` (or `docker builder prune -f`, then `task deploy:image TAG=<tag>`).
+
 ## Port already in use (Compose)
 
 Every published port has a variable in `deploy/compose/.env`: `APP_PORT`, `POSTGRES_PORT`, `REDIS_PORT`, `S3_PORT`, `AZURITE_BLOB_PORT`, `MAILPIT_UI_PORT`, `MAILPIT_SMTP_PORT`, `ASPIRE_UI_PORT` and `ASPIRE_OTLP_PORT`. Change the clashing one and run `docker compose -f deploy/compose/compose.yaml up -d` again. With a non-default `POSTGRES_PORT`, also adjust the local connection strings in user secrets.

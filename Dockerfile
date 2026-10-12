@@ -21,11 +21,12 @@ ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_NOLOGO=1
 COPY global.json nuget.config Directory.Build.props Directory.Packages.props .editorconfig ./
 COPY --from=manifests /src/src/ src/
-RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
-    dotnet restore src/Host/Acme.Service.Host/Acme.Service.Host.csproj --locked-mode
+# No BuildKit cache mount for the package store: a mount is not part of the layer, so a cached restore layer
+# (obj/project.assets.json) could outlive a pruned cache and publish --no-restore would fail with NETSDK1064.
+# Packages stay in this layer, next to the assets file that points at them.
+RUN dotnet restore src/Host/Acme.Service.Host/Acme.Service.Host.csproj --locked-mode
 COPY src/ src/
-RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
-    dotnet publish src/Host/Acme.Service.Host/Acme.Service.Host.csproj \
+RUN dotnet publish src/Host/Acme.Service.Host/Acme.Service.Host.csproj \
       -c Release -o /app --no-restore /p:UseAppHost=false
 
 # ---- Stage 3: runtime (chiseled Ubuntu, no shell or package manager, non-root user 1654, includes ICU and tzdata) ----
