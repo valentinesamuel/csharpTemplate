@@ -54,7 +54,7 @@ If LGPL is not acceptable, the `IJobQueue` port allows a replacement provider, f
 
 ## Related invariants
 
-- INV-16: the Hangfire schema is installed only by `migrate`.
+- INV-16: the Hangfire schema is installed only by the migrate path (the `migrate` verb, or the opt-in `Migrations:RunOnStart` step that calls it).
 - INV-24: the job provider is replaceable behind `IJobQueue`.
 - INV-25: licences are recorded; LGPL is allowed only pending policy confirmation.
 - INV-10: external effects run in jobs, outside database transactions.

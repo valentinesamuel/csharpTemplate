@@ -29,7 +29,7 @@ Blob__S3__AccessKey=<R2 access key id>        # secret
 Blob__S3__SecretKey=<R2 secret access key>    # secret
 ```
 
-- Put the two keys in your secret store (in Kubernetes, `acme-service-secrets`; see [secrets](../operations/secrets.md)) and the rest in the ConfigMap.
+- Put the two keys in your secret store (when deployed, `sync: false` environment variables in `render.yaml`; see [secrets](../operations/secrets.md)) and the rest in the deployment platform's environment variables.
 - Leave `Blob__S3__ForcePathStyle` at `false` unless your store needs path-style URLs (RustFS and MinIO do).
 - Create the bucket beforehand, or set `Blob__S3__CreateIfMissing=true`.
 - Download URLs are presigned S3 URLs valid for at most 15 minutes; R2 supports them, so attachment downloads redirect instead of streaming.

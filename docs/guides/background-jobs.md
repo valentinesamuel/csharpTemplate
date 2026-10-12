@@ -94,7 +94,7 @@ Reference: `src/Modules/Orders/Acme.Service.Modules.Orders/Jobs/ExpireStalePendi
 
 ## Hangfire specifics
 
-- **Schema.** The web app never creates the `hangfire` schema (INV-16). `migrate` installs or upgrades it when `Jobs:Provider=Hangfire` is set for the migrate run. If the app starts first, it stays ready, but Hangfire workers log errors and `IJobQueue` calls fail until `migrate` has run.
+- **Schema.** The web host composition never creates the `hangfire` schema (INV-16). The migrate path installs or upgrades it when `Jobs:Provider=Hangfire` is set for the migrate run (this includes the opt-in `Migrations:RunOnStart` step, which uses the web app's `Jobs__Provider`). If the app starts first, it stays ready, but Hangfire workers log errors and `IJobQueue` calls fail until `migrate` has run.
 - **Timing.** Scheduled and recurring jobs are polled every 15 seconds, so they can start up to about 15 seconds late, never early.
 - **Workers.** `Jobs:Hangfire:WorkerCount` per replica (default: processor count x 5, at most 20). Every replica runs a Hangfire server.
 - **Renames.** Persisted jobs reference the CLR names of the job and payload types. Renaming or moving either (including running `scripts/init.cs` on a service that already has persisted jobs) orphans the stored jobs. Drain the queues before such a rename.

@@ -142,8 +142,7 @@ csharpBoilerplate/
 │       └── Orders/   # Acme.Service.Modules.Orders + .Contracts (removable sample module)
 ├── tests/            # unit, integration, architecture tests + shared fixtures
 ├── deploy/
-│   ├── compose/      # docker compose stack for local/full-stack runs
-│   └── k8s/          # Kustomize base + dev/qa/prod overlays + migration Job
+│   └── compose/      # docker compose stack for local/full-stack runs
 ├── docs/             # architecture, ADRs (decisions), guides, operations, cookbook
 ├── scripts/          # init.cs, dev-env.cs (C# file-based apps) and ci/*.sh
 └── .github/          # CI workflow, dependabot, PR template
@@ -159,7 +158,7 @@ csharpBoilerplate/
 | `src/Modules/*` | `src/modules/*` | Business features. Each has its own DB schema, DbContext, outbox/inbox tables. |
 | `*.Contracts` | (no equivalent; closest is a shared `types` package) | The *only* surface other modules may reference: integration events, permission names, small interfaces like `IUserDirectory`. |
 | `tests/` | `test/` + co-located `*.spec.ts` | Separate projects, never co-located with code. |
-| `deploy/` | `Dockerfile` + `.azuredevops/manifests/` | Compose for local; Kustomize for k8s. |
+| `deploy/` | `Dockerfile` + `.azuredevops/manifests/` | Compose for local; the image is published to GHCR by CI. |
 | `docs/` | `README.md` | Unusually thorough. Start with `docs/README.md`. |
 | `scripts/` | `package.json` scripts | `.cs` files run with `dotnet run scripts/x.cs`. |
 
@@ -380,7 +379,7 @@ Failures are **values, not exceptions**: `Task<Result<TOut>>`. A use case return
 | --- | --- | --- |
 | Source files | `.local.env`, `.env` | `appsettings.json`, `appsettings.{Environment}.json` |
 | Secrets (local) | `.env` (gitignored) | `dotnet user-secrets` (Development only) |
-| Secrets (deployed) | Dockerfile `ARG`/`ENV` | environment variables / k8s Secrets (never baked in the image) |
+| Secrets (deployed) | Dockerfile `ARG`/`ENV` | environment variables, set as Render environment variables (never baked in the image) |
 | Nesting | `registerAs('typeorm', ...)`, read `get('common.auth.jwtSecret')` | JSON sections, read as `Auth:Jwt:Issuer` |
 | Env var syntax | `AUTH_JWT_ISSUER` | `Auth__Jwt__Issuer` (double underscore replaces `:`) |
 | Validation | Joi schema, fail-fast | options validation at startup, exit code 1 with the failing key |
@@ -437,7 +436,7 @@ Constants: `src/BuildingBlocks/Acme.Service.BuildingBlocks.Persistence/Connectio
 | | Nest repo | This repo |
 | --- | --- | --- |
 | Create | `npm run migration:generate` | `dotnet ef migrations add <Name> ...` (see [recipe](#94-add-a-migration)) |
-| Run | `npm run migration:run:prod && node dist/main` (every container start) | `... -- migrate` verb, a separate compose service / k8s Job; **the web app never migrates** (ADR-0009) |
+| Run | `npm run migration:run:prod && node dist/main` (every container start) | `... -- migrate` verb, a separate compose service or one-shot container; **the web host never migrates**; opt-in `Migrations__RunOnStart=true` runs the same `migrate` step before the app starts (ADR-0009) |
 | If pending | app starts anyway | `/health/ready` returns 503 until migrated |
 | Concurrency | n/a | `migrate` takes a Postgres advisory lock so two Jobs can't collide |
 
@@ -565,7 +564,16 @@ Registration was automatic: `AddModules` scanned the assembly for `IUseCase<,>` 
 
 Prerequisites: the .NET SDK version in `global.json`, and Docker. The commands below mirror `docs/guides/getting-started.md`, which is the source of truth.
 
+Optional but handy: [Task](https://taskfile.dev/installation) (`brew install go-task`), the closest thing here to `npm run <script>`. `Taskfile.yml` at the root names every command (`task --list` shows them all; reference: `docs/guides/task-commands.md`). Each step below shows the `task` form first and the raw command after it; CI only uses the raw commands.
+
 ### 8.1 First build
+
+```bash
+task dev:setup   # tool restore, locked restore, deploy/compose/.env (8.2), PostgreSQL
+task b           # Release build, warnings are errors
+```
+
+Without `task`:
 
 ```bash
 dotnet tool restore                                # installs dotnet-ef from .config/dotnet-tools.json
@@ -575,7 +583,8 @@ dotnet build Acme.Service.slnx -c Release          # warnings are errors
 ### 8.2 Generate local secrets
 
 ```bash
-dotnet run scripts/dev-env.cs
+task dev:env                    # part of task dev:setup; skipped when the file exists
+dotnet run scripts/dev-env.cs   # without task
 ```
 
 This writes `deploy/compose/.env` (gitignored) with a generated JWT signing key and random passwords, and prints `dotnet user-secrets set ...` commands. Treat that output as secret. It will not overwrite an existing `.env` unless you pass `-- --force`.
@@ -583,6 +592,7 @@ This writes `deploy/compose/.env` (gitignored) with a generated JWT signing key 
 ### 8.3 Path A: everything in Docker Compose
 
 ```bash
+task up                                            # or, without task:
 docker compose -f deploy/compose/compose.yaml up -d --build
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/health/ready   # expect 200
 ```
@@ -594,6 +604,15 @@ Starts Postgres, Redis, RustFS (S3), Azurite, Mailpit (web UI at `http://localho
 Only Postgres is required; everything else uses in-process providers.
 
 ```bash
+task docker:up:infra   # PostgreSQL only
+# run the `dotnet user-secrets set ...` lines printed by scripts/dev-env.cs
+task db:migrate        # sets DOTNET_ENVIRONMENT=Development for you
+task r                 # or task dev:watch for hot reload
+```
+
+Without `task`:
+
+```bash
 docker compose -f deploy/compose/compose.yaml up -d postgres
 # run the `dotnet user-secrets set ...` lines printed by scripts/dev-env.cs
 DOTNET_ENVIRONMENT=Development dotnet run --project src/Host/Acme.Service.Host -- migrate
@@ -603,7 +622,7 @@ dotnet run --project src/Host/Acme.Service.Host
 - API at `http://localhost:8080`, interactive docs at `http://localhost:8080/scalar`.
 - Emails are logged to the console (in Development the body includes the confirmation link).
 - Re-run `migrate` after every pull that adds migrations. Until you do, `/health/ready` is 503.
-- List pending migrations: `... -- migrate --list`.
+- List pending migrations: `task db:migrate:list` or `... -- migrate --list`.
 
 In an IDE (Rider, VS, VS Code C# Dev Kit), open `Acme.Service.slnx`, set `Acme.Service.Host` as the startup project, and use the `http` launch profile.
 
@@ -620,6 +639,17 @@ Full flows: `docs/guides/auth.md`.
 ### 8.6 Test, format, lint
 
 ```bash
+task t                                             # unit + architecture, no Docker needed
+task test:integration                              # needs Docker
+task test:one PROJECT=tests/Acme.Service.Modules.Auth.Tests
+task test:arch
+task dev:format:check                              # task f fixes in place
+task ci                                            # the CI build-test gates plus the doc checks
+```
+
+Without `task`:
+
+```bash
 dotnet test Acme.Service.slnx -c Release --filter "Category!=Integration"   # no Docker needed
 dotnet test Acme.Service.slnx -c Release --filter "Category=Integration"    # needs Docker
 dotnet test tests/Acme.Service.Modules.Orders.Tests -c Release              # one project
@@ -627,7 +657,7 @@ dotnet test Acme.Service.slnx -c Release --filter "FullyQualifiedName~Architectu
 dotnet format Acme.Service.slnx --verify-no-changes
 ```
 
-Before opening a PR, make sure all of the above pass, plus the CI helper scripts in `scripts/ci/` that apply to your change (for example `check-doc-links.sh` if you touched docs).
+Before opening a PR, make sure all of the above pass (`task ci` runs the CI gates in order), plus the CI helper scripts in `scripts/ci/` that apply to your change (for example `check-doc-links.sh` if you touched docs).
 
 ---
 
@@ -659,7 +689,8 @@ Declare it in the module's `*Permissions.cs` (see `OrdersPermissions.cs`) with i
 ### 9.4 Add a migration
 
 Nest: `npm run migration:generate`.
-Here (replace the module and context names):
+With task: `task db:add MODULE=Orders NAME=AddOrderNotes` (no database needed; then the follow-up below and `task db:migrate`).
+Without task (replace the module and context names):
 
 ```bash
 dotnet tool restore
@@ -709,7 +740,7 @@ Commit the lock files. High/critical advisories fail the build; check the packag
 | Banned packages (R9) | restore/arch test failure | use the in-house pipeline / hand mapping |
 | Stale lock files | CI restore fails with `--locked-mode` | `dotnet restore --force-evaluate`, commit locks |
 | Fail-closed auth | a new public route returns 401 | `.AllowAnonymous()` *and* add to `AnonymousEndpointAllowlist.cs` |
-| Web app never migrates | `/health/ready` is 503, tables missing | run the `migrate` verb |
+| Web app never migrates (`Migrations__RunOnStart` off) | `/health/ready` is 503, tables missing | run the `migrate` verb |
 | `DOTNET_ENVIRONMENT` for verbs | `migrate` can't find the connection string | prefix the command with `DOTNET_ENVIRONMENT=Development` |
 | Secrets | gitleaks fails CI | use user-secrets/env vars; never in `appsettings*.json` or tracked files |
 | Docs conventions | doc link/config-key checks fail | every backticked path must exist; every config key documented |
@@ -780,23 +811,23 @@ Suggested reading order inside this repo: `docs/README.md` → `docs/architectur
 
 ## 13. Command cheat-sheet
 
-| You'd type in Node/Nest | Here |
-| --- | --- |
-| `npm install` | `dotnet restore` (implicit in build) |
-| `npm ci` | `dotnet restore --locked-mode` |
-| `npm run build` | `dotnet build Acme.Service.slnx -c Release` |
-| `npm run start:dev` | `dotnet run --project src/Host/Acme.Service.Host` (or `dotnet watch run --project ...` for reload) |
-| `npm run start:prod` | `dotnet src/Host/.../Acme.Service.Host.dll` (via the Docker image) |
-| `npm test` | `dotnet test Acme.Service.slnx -c Release --filter "Category!=Integration"` |
-| `npm run test:e2e` | `dotnet test ... --filter "Category=Integration"` |
-| `npm run lint` | `dotnet format Acme.Service.slnx --verify-no-changes` (drop the flag to fix) |
-| `npm run migration:run` | `DOTNET_ENVIRONMENT=Development dotnet run --project src/Host/Acme.Service.Host -- migrate` |
-| `npm run migration:generate` | `dotnet ef migrations add <Name> --project <module> --startup-project src/Host/Acme.Service.Host --context <Name>DbContext --output-dir Persistence/Migrations` |
-| `npm audit` | `scripts/ci/check-vulnerable.sh` (needs `jq`) |
-| `npm i <pkg>` | edit `Directory.Packages.props` + the project's `.csproj`, then `dotnet restore Acme.Service.slnx --force-evaluate` |
-| `npx <tool>` | `dotnet tool run <tool>` / `dotnet <tool>` (see `.config/dotnet-tools.json`) |
-| docker compose | `docker compose -f deploy/compose/compose.yaml up -d --build` |
-| new project from template | `dotnet run scripts/init.cs -- --name Contoso.Billing [--remove-sample] [--dry-run]` |
+| You'd type in Node/Nest | With task | Here (raw) |
+| --- | --- | --- |
+| `npm install` | (implicit in `task b`) | `dotnet restore` (implicit in build) |
+| `npm ci` | `task dev:restore` | `dotnet restore --locked-mode` |
+| `npm run build` | `task b` | `dotnet build Acme.Service.slnx -c Release` |
+| `npm run start:dev` | `task r` (`task dev:watch` for reload) | `dotnet run --project src/Host/Acme.Service.Host` (or `dotnet watch run --project ...` for reload) |
+| `npm run start:prod` | `task up` (the Docker image) | `dotnet src/Host/.../Acme.Service.Host.dll` (via the Docker image) |
+| `npm test` | `task t` | `dotnet test Acme.Service.slnx -c Release --filter "Category!=Integration"` |
+| `npm run test:e2e` | `task test:integration` | `dotnet test ... --filter "Category=Integration"` |
+| `npm run lint` | `task dev:format:check` (`task f` fixes) | `dotnet format Acme.Service.slnx --verify-no-changes` (drop the flag to fix) |
+| `npm run migration:run` | `task db:migrate` | `DOTNET_ENVIRONMENT=Development dotnet run --project src/Host/Acme.Service.Host -- migrate` |
+| `npm run migration:generate` | `task db:add MODULE=<Module> NAME=<Name>` | `dotnet ef migrations add <Name> --project <module> --startup-project src/Host/Acme.Service.Host --context <Name>DbContext --output-dir Persistence/Migrations` |
+| `npm audit` | `task ci:vulnerable` | `scripts/ci/check-vulnerable.sh` (needs `jq`) |
+| `npm i <pkg>` | (none: edit, then the raw restore) | edit `Directory.Packages.props` + the project's `.csproj`, then `dotnet restore Acme.Service.slnx --force-evaluate` |
+| `npx <tool>` | (none) | `dotnet tool run <tool>` / `dotnet <tool>` (see `.config/dotnet-tools.json`) |
+| docker compose | `task up`, `task down` | `docker compose -f deploy/compose/compose.yaml up -d --build` |
+| new project from template | `task init NAME=Contoso.Billing [-- --remove-sample]` | `dotnet run scripts/init.cs -- --name Contoso.Billing [--remove-sample] [--dry-run]` |
 
 More: `docs/cookbook.md`.
 

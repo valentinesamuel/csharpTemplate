@@ -24,7 +24,7 @@
 //
 // Name forms, for --name Contoso.BillingApi:
 //   PascalCase dotted  Contoso.BillingApi   (solution, projects, assemblies, namespaces, folders)
-//   kebab-case         contoso-billing-api  (image, compose project, k8s names/labels, OTel service.name, JWT defaults)
+//   kebab-case         contoso-billing-api  (image, compose project, OTel service.name, JWT defaults)
 //   snake_case         contoso_billing_api  (Postgres database name)
 //   lowercase dotted   contoso.billingapi   (project names inside NuGet-generated packages.lock.json files)
 // kebab/snake rule: split the name on '.', split each segment again before every upper-case letter that follows a
@@ -358,7 +358,7 @@ Console.WriteLine($"  dotnet test {name}.slnx --filter \"Category!=Integration\"
 Console.WriteLine("  dotnet run scripts/dev-env.cs                       # local secrets for docker compose and user-secrets");
 Console.WriteLine($"  git add -A && git commit -m \"Initialize {name} from the template\"");
 Console.WriteLine();
-Console.WriteLine($"Also set your container registry in deploy/k8s/**/kustomization.yaml (newName: registry.example.com/your-org/{kebab}).");
+Console.WriteLine($"The CI publish job pushes ghcr.io/<owner>/acme-service; if you renamed the image, update the image name in .github/workflows/ci.yml (publish job) to ghcr.io/<owner>/{kebab}.");
 return 0;
 
 static void PrintUsage(TextWriter writer) =>

@@ -1,0 +1,650 @@
+# Developer task runner for Acme.Service (go-task v3, binary `task`).
+#
+# Install:  https://taskfile.dev/installation  (macOS: brew install go-task, Windows: winget install Task.Task)
+# Discover: task --list            (every public task with its description)
+# Usage:    task <ns>:<name> VAR=value -- <extra args passed to the underlying command>
+#           e.g. task test:unit -- --filter "FullyQualifiedName~Foo"
+# Preview:  task --dry <name>      (prints the commands without running them)
+#
+# `task` is a convenience only. CI (.github/workflows/ci.yml) and the Docker image call the raw commands, and every
+# command below stays documented in docs/ for people without `task`.
+#
+# Rules for this file: no env-file loading and no secret values; ordering only
+# through sequential `- task:` calls in cmds; no checksum/fingerprint keys (no .task/ directory); POSIX sh only in
+# cmds, preconditions and status. Repo scripts are invoked, never copied.
+
+version: '3'
+
+vars:
+  SLN: Acme.Service.slnx
+  COMPOSE: deploy/compose/compose.yaml
+  HOST: src/Host/Acme.Service.Host
+  CONFIG: Release
+  COMPOSE_ENV: deploy/compose/.env
+  IMAGE_NAME: acme-service
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+tasks:
+  default:
+    desc: List every task with its description (same as task --list).
+    silent: true
+    cmds:
+      - '{{.TASK_EXE}} --list'
+
+  # ---------------------------------------------------------------------------
+  # dev: local setup, build, run, format
+  # ---------------------------------------------------------------------------
+
+  dev:setup:
+    desc: 'First-time setup: restore tools and packages, generate deploy/compose/.env if missing, start Postgres.'
+    preconditions:
+      - sh: command -v dotnet
+        msg: 'dotnet is not on PATH: install the .NET SDK pinned in global.json.'
+      - sh: command -v docker
+        msg: 'docker is not on PATH: install Docker Desktop (or Docker Engine with the compose plugin).'
+    cmds:
+      - dotnet tool restore
+      - task: dev:restore
+      - task: dev:env
+      - docker compose -f {{.COMPOSE}} up -d --wait postgres
+      - cmd: |
+          echo ""
+          echo "Setup done. Next steps:"
+          echo "  1. If dev-env just generated {{.COMPOSE_ENV}}, run the 'dotnet user-secrets set ...' commands it printed."
+          echo "  2. task db:migrate   (apply every module's migrations locally)"
+          echo "  3. task dev:run      (or: task r)"
+        silent: true
+
+  dev:env:
+    desc: 'Generate deploy/compose/.env with dotnet run scripts/dev-env.cs; skipped when the file exists (regenerate by hand: dotnet run scripts/dev-env.cs -- --force).'
+    cmds:
+      - dotnet run scripts/dev-env.cs
+    status:
+      - test -f {{.COMPOSE_ENV}}
+
+  dev:restore:
+    desc: 'Restore NuGet packages in locked mode, as CI does (after a deliberate package change use: dotnet restore Acme.Service.slnx --force-evaluate).'
+    cmds:
+      - dotnet restore {{.SLN}} --locked-mode
+
+  dev:build:
+    desc: Build the solution (CONFIG=Release by default; warnings are errors).
+    aliases: [b]
+    cmds:
+      - dotnet build {{.SLN}} -c {{.CONFIG}}
+
+  dev:run:
+    desc: 'Run the host with the Development launch profile on http://localhost:8080 (extra args after --).'
+    aliases: [r]
+    silent: true
+    cmds:
+      - dotnet run --project {{.HOST}} {{.CLI_ARGS}}
+
+  dev:watch:
+    desc: Run the host under dotnet watch (hot reload; extra args after --).
+    silent: true
+    cmds:
+      - dotnet watch run --project {{.HOST}} {{.CLI_ARGS}}
+
+  dev:format:
+    desc: Apply dotnet format to the solution (fixes files in place).
+    aliases: [f]
+    cmds:
+      - dotnet format {{.SLN}}
+
+  dev:format:check:
+    desc: Verify formatting without changing files (dotnet format --verify-no-changes).
+    cmds:
+      - dotnet format {{.SLN}} --verify-no-changes
+
+  dev:clean:
+    desc: Clean build outputs for CONFIG (Release by default).
+    cmds:
+      - dotnet clean {{.SLN}} -c {{.CONFIG}}
+
+  # ---------------------------------------------------------------------------
+  # test: unit, integration, architecture, coverage
+  # ---------------------------------------------------------------------------
+
+  test:
+    desc: Run every test, integration tests included (needs a running Docker; extra args after --).
+    silent: true
+    preconditions:
+      - sh: docker info
+        msg: 'Integration tests need a running Docker; start Docker, or use task test:unit.'
+    cmds:
+      - dotnet test {{.SLN}} -c {{.CONFIG}} {{.CLI_ARGS}}
+
+  test:unit:
+    desc: Run unit and architecture tests, no Docker needed (Category!=Integration; extra args after --).
+    aliases: [t]
+    silent: true
+    cmds:
+      - dotnet test {{.SLN}} -c {{.CONFIG}} --filter "Category!=Integration" {{.CLI_ARGS}}
+
+  test:integration:
+    desc: Run integration tests only (Category=Integration; needs a running Docker; extra args after --).
+    silent: true
+    preconditions:
+      - sh: docker info
+        msg: 'Integration tests need a running Docker (Testcontainers): start Docker and retry.'
+    cmds:
+      - dotnet test {{.SLN}} -c {{.CONFIG}} --filter "Category=Integration" {{.CLI_ARGS}}
+
+  test:arch:
+    desc: Run architecture tests only, including TemplateTokenTests (extra args after --).
+    silent: true
+    cmds:
+      - dotnet test {{.SLN}} -c {{.CONFIG}} --filter "FullyQualifiedName~ArchitectureTests" {{.CLI_ARGS}}
+
+  test:one:
+    desc: 'Run the tests of one project or path: task test:one PROJECT=tests/Acme.Service.Modules.Auth.Tests (extra args after --).'
+    silent: true
+    requires:
+      vars: [PROJECT]
+    preconditions:
+      - sh: test -e "{{.PROJECT}}"
+        msg: "PROJECT '{{.PROJECT}}' does not exist; example: task test:one PROJECT=tests/Acme.Service.Modules.Auth.Tests"
+    cmds:
+      - dotnet test {{.PROJECT}} -c {{.CONFIG}} {{.CLI_ARGS}}
+
+  test:cov:
+    desc: Run unit tests with XPlat code coverage into TestResults/coverage (gitignored; extra args after --).
+    silent: true
+    cmds:
+      - dotnet test {{.SLN}} -c {{.CONFIG}} --filter "Category!=Integration" --collect "XPlat Code Coverage" --results-directory TestResults/coverage {{.CLI_ARGS}}
+
+  # ---------------------------------------------------------------------------
+  # db: EF Core migrations per module and the local migrate verb
+  # EF options: --project src/Modules/<M>/Acme.Service.Modules.<M> --startup-project <host> --context <M>DbContext
+  # ---------------------------------------------------------------------------
+
+  db:add:
+    desc: 'Add an EF migration to a module: task db:add MODULE=Auth NAME=AddWidgets (then make the generated classes internal).'
+    requires:
+      vars: [MODULE, NAME]
+    preconditions:
+      - sh: test -d "src/Modules/{{.MODULE}}/Acme.Service.Modules.{{.MODULE}}"
+        msg: "unknown module '{{.MODULE}}'; expected a folder under src/Modules"
+      - sh: dotnet ef --version
+        msg: 'dotnet ef is not available: run task dev:setup (dotnet tool restore).'
+    cmds:
+      - dotnet ef migrations add {{.NAME}} --project src/Modules/{{.MODULE}}/Acme.Service.Modules.{{.MODULE}} --startup-project {{.HOST}} --context {{.MODULE}}DbContext --output-dir Persistence/Migrations
+      - cmd: |
+          echo ""
+          echo "Next: make the migration, its designer and the model snapshot classes internal (architecture rule R5),"
+          echo "review the generated SQL (task db:script MODULE={{.MODULE}}) and keep changes expand/contract safe."
+          echo "Check with: task test:arch"
+        silent: true
+
+  db:list:
+    desc: 'List a module''s migrations without a database: task db:list MODULE=Auth (extra args after --).'
+    requires:
+      vars: [MODULE]
+    preconditions:
+      - sh: test -d "src/Modules/{{.MODULE}}/Acme.Service.Modules.{{.MODULE}}"
+        msg: "unknown module '{{.MODULE}}'; expected a folder under src/Modules"
+      - sh: dotnet ef --version
+        msg: 'dotnet ef is not available: run task dev:setup (dotnet tool restore).'
+    cmds:
+      - dotnet ef migrations list --project src/Modules/{{.MODULE}}/Acme.Service.Modules.{{.MODULE}} --startup-project {{.HOST}} --context {{.MODULE}}DbContext --no-connect {{.CLI_ARGS}}
+
+  db:remove:
+    desc: 'Remove a module''s last migration: task db:remove MODULE=Auth (connects via ConnectionStrings__PostgresMigrations).'
+    requires:
+      vars: [MODULE]
+    preconditions:
+      - sh: test -d "src/Modules/{{.MODULE}}/Acme.Service.Modules.{{.MODULE}}"
+        msg: "unknown module '{{.MODULE}}'; expected a folder under src/Modules"
+      - sh: dotnet ef --version
+        msg: 'dotnet ef is not available: run task dev:setup (dotnet tool restore).'
+    cmds:
+      - cmd: echo "dotnet ef migrations remove connects to the database through ConnectionStrings__PostgresMigrations."
+        silent: true
+      - dotnet ef migrations remove --project src/Modules/{{.MODULE}}/Acme.Service.Modules.{{.MODULE}} --startup-project {{.HOST}} --context {{.MODULE}}DbContext
+      - cmd: echo "Re-check that the model snapshot is still internal (architecture rule R5), then run task test:arch."
+        silent: true
+
+  db:script:
+    desc: 'Write an idempotent SQL script of a module''s migrations: task db:script MODULE=Auth [OUT=artifacts/sql/Auth.sql].'
+    requires:
+      vars: [MODULE]
+    vars:
+      OUT: '{{.OUT | default (printf "artifacts/sql/%s.sql" .MODULE)}}'
+    preconditions:
+      - sh: test -d "src/Modules/{{.MODULE}}/Acme.Service.Modules.{{.MODULE}}"
+        msg: "unknown module '{{.MODULE}}'; expected a folder under src/Modules"
+      - sh: dotnet ef --version
+        msg: 'dotnet ef is not available: run task dev:setup (dotnet tool restore).'
+    cmds:
+      - dotnet ef migrations script --idempotent --project src/Modules/{{.MODULE}}/Acme.Service.Modules.{{.MODULE}} --startup-project {{.HOST}} --context {{.MODULE}}DbContext --output {{.OUT}}
+
+  db:migrate:
+    desc: 'Apply every module''s migrations, the Hangfire schema when configured and the Auth seed locally (DOTNET_ENVIRONMENT=Development; the web host never migrates).'
+    silent: true
+    env:
+      DOTNET_ENVIRONMENT: Development
+    cmds:
+      - dotnet run --project {{.HOST}} -- migrate
+
+  db:migrate:list:
+    desc: 'List applied and pending migrations per module locally (read-only; DOTNET_ENVIRONMENT=Development).'
+    silent: true
+    env:
+      DOTNET_ENVIRONMENT: Development
+    cmds:
+      - dotnet run --project {{.HOST}} -- migrate --list
+
+  # ---------------------------------------------------------------------------
+  # ci: local mirror of the ci.yml build-test job (always Release; CONFIG is ignored)
+  # ---------------------------------------------------------------------------
+
+  ci:
+    desc: 'Mirror the ci.yml build-test job (locked restore, Release build, format gate, unit tests, vulnerable scan) plus the doc checks; integration tests: task ci:integration.'
+    cmds:
+      - dotnet restore {{.SLN}} --locked-mode
+      - dotnet build {{.SLN}} -c Release --no-restore
+      - dotnet format {{.SLN}} --verify-no-changes --no-restore
+      - dotnet test {{.SLN}} -c Release --no-build --filter "Category!=Integration"
+      - task: ci:vulnerable
+      - task: ci:docs
+
+  ci:integration:
+    desc: Run the integration tests as CI does (Release; needs a running Docker).
+    preconditions:
+      - sh: docker info
+        msg: 'Integration tests need a running Docker (Testcontainers): start Docker and retry.'
+    cmds:
+      - dotnet test {{.SLN}} -c Release --filter "Category=Integration"
+
+  ci:vulnerable:
+    desc: Fail on vulnerable NuGet packages (scripts/ci/check-vulnerable.sh; needs jq and a restored solution).
+    preconditions:
+      - sh: command -v jq
+        msg: 'jq is not on PATH: install jq (macOS: brew install jq, Windows: winget install jqlang.jq).'
+    cmds:
+      - bash scripts/ci/check-vulnerable.sh {{.SLN}}
+
+  ci:docs:
+    desc: Check relative doc links and documented configuration keys (scripts/ci/check-doc-links.sh, check-config-keys.sh).
+    cmds:
+      - bash scripts/ci/check-doc-links.sh README.md docs src/Modules/Auth/README.md src/BuildingBlocks
+      # <sample:orders>
+      - bash scripts/ci/check-doc-links.sh src/Modules/Orders/README.md
+      # </sample:orders>
+      - bash scripts/ci/check-config-keys.sh
+
+  # ---------------------------------------------------------------------------
+  # init: turn the template into your service
+  # ---------------------------------------------------------------------------
+
+  init:
+    desc: 'Rewrite the repository for a new service name (scripts/init.cs): task init NAME=Contoso.Billing [-- --remove-sample]. Run on a fresh, clean clone; it rewrites files in place.'
+    requires:
+      vars: [NAME]
+    cmds:
+      - dotnet run scripts/init.cs -- --name {{.NAME}} {{.CLI_ARGS}}
+
+  init:dry:
+    desc: 'Preview what task init would change without writing anything: task init:dry NAME=Contoso.Billing [-- --remove-sample].'
+    requires:
+      vars: [NAME]
+    cmds:
+      - dotnet run scripts/init.cs -- --name {{.NAME}} --dry-run {{.CLI_ARGS}}
+
+  # ---------------------------------------------------------------------------
+  # docker: local Compose stack (deploy/compose/compose.yaml; needs deploy/compose/.env)
+  # ---------------------------------------------------------------------------
+
+  docker:up:
+    desc: Build the image and start the full local stack (Postgres, Redis, RustFS, Azurite, Mailpit, one-shot migrate, app).
+    aliases: [up]
+    preconditions:
+      - sh: test -f {{.COMPOSE_ENV}}
+        msg: 'deploy/compose/.env is missing: run task dev:setup'
+      - sh: docker info
+        msg: 'Docker is not running: start Docker and retry.'
+    cmds:
+      - docker compose -f {{.COMPOSE}} up -d --build
+
+  docker:up:infra:
+    desc: Start only Postgres and wait until it is healthy (all that dotnet run / task dev:run needs).
+    preconditions:
+      - sh: test -f {{.COMPOSE_ENV}}
+        msg: 'deploy/compose/.env is missing: run task dev:setup'
+      - sh: docker info
+        msg: 'Docker is not running: start Docker and retry.'
+    cmds:
+      - docker compose -f {{.COMPOSE}} up -d --wait postgres
+
+  docker:obs:
+    desc: Start the full stack plus the Aspire dashboard (observability profile; set OTLP_ENDPOINT in deploy/compose/.env).
+    preconditions:
+      - sh: test -f {{.COMPOSE_ENV}}
+        msg: 'deploy/compose/.env is missing: run task dev:setup'
+      - sh: docker info
+        msg: 'Docker is not running: start Docker and retry.'
+    cmds:
+      - docker compose -f {{.COMPOSE}} --profile observability up -d --build
+      - cmd: |
+          echo ""
+          echo "Telemetry reaches the dashboard only when deploy/compose/.env sets OTLP_ENDPOINT=http://aspire-dashboard:18889"
+          echo "(then re-run this task). Dashboard UI: http://localhost:18888"
+        silent: true
+
+  docker:down:
+    desc: Stop and remove the local stack containers (data volumes are kept; task docker:reset deletes them).
+    aliases: [down]
+    preconditions:
+      - sh: test -f {{.COMPOSE_ENV}}
+        msg: 'deploy/compose/.env is missing: run task dev:setup'
+      - sh: docker info
+        msg: 'Docker is not running: start Docker and retry.'
+    cmds:
+      - docker compose -f {{.COMPOSE}} down
+
+  docker:reset:
+    desc: 'Stop the local stack AND delete its data volumes (asks first; non-interactive: task --yes docker:reset).'
+    prompt: Delete all local data volumes (Postgres, RustFS, Azurite) of the local stack?
+    preconditions:
+      - sh: test -f {{.COMPOSE_ENV}}
+        msg: 'deploy/compose/.env is missing: run task dev:setup'
+      - sh: docker info
+        msg: 'Docker is not running: start Docker and retry.'
+    cmds:
+      - docker compose -f {{.COMPOSE}} down -v
+
+  docker:logs:
+    desc: 'Show the last 100 log lines of the stack or one service: task docker:logs [SVC=app] (follow: -- -f).'
+    silent: true
+    vars:
+      SVC: '{{.SVC | default ""}}'
+    preconditions:
+      - sh: test -f {{.COMPOSE_ENV}}
+        msg: 'deploy/compose/.env is missing: run task dev:setup'
+      - sh: docker info
+        msg: 'Docker is not running: start Docker and retry.'
+    cmds:
+      - docker compose -f {{.COMPOSE}} logs --tail 100 {{.SVC}} {{.CLI_ARGS}}
+
+  docker:ps:
+    desc: List the local stack containers and their health.
+    preconditions:
+      - sh: test -f {{.COMPOSE_ENV}}
+        msg: 'deploy/compose/.env is missing: run task dev:setup'
+      - sh: docker info
+        msg: 'Docker is not running: start Docker and retry.'
+    cmds:
+      - docker compose -f {{.COMPOSE}} ps
+
+  docker:migrate:
+    desc: Run the one-shot Compose migrate service (every module's migrations, the Hangfire schema and the Auth seed).
+    preconditions:
+      - sh: test -f {{.COMPOSE_ENV}}
+        msg: 'deploy/compose/.env is missing: run task dev:setup'
+      - sh: docker info
+        msg: 'Docker is not running: start Docker and retry.'
+    cmds:
+      - docker compose -f {{.COMPOSE}} run --rm migrate
+
+  docker:grant-admin:
+    desc: 'Grant the Admin role to an existing user on the local stack: task docker:grant-admin EMAIL=you@example.com'
+    requires:
+      vars: [EMAIL]
+    preconditions:
+      - sh: test -f {{.COMPOSE_ENV}}
+        msg: 'deploy/compose/.env is missing: run task dev:setup'
+      - sh: docker info
+        msg: 'Docker is not running: start Docker and retry.'
+    cmds:
+      - docker compose -f {{.COMPOSE}} run --rm migrate auth:grant-role --email "{{.EMAIL}}" --role Admin
+
+  # ---------------------------------------------------------------------------
+  # deploy: build, migrate, run and check the image on a single Docker host
+  # (Render, the primary target, deploys on push: see task deploy:render.)
+  # Secrets reach containers only through --env-file <uncommitted file> (INV-11); env-file paths reach the shell only
+  # as "$DEPLOY_*" environment variables. IMAGE, TAG, NAME, NETWORK, PORT, BIND and URL are allowlisted first
+  # (checked through the same env variables), so later commands may template them safely.
+  # Images must carry an exact tag (sha-<short> or a version): never empty, latest or main, and are never pulled
+  # (--pull never): build with task deploy:image or docker pull first.
+  # Never use TAG=local: it would overwrite the Compose image acme-service:local.
+  # Container hardening: image user (non-root 1654), --read-only, --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,
+  # --cap-drop ALL, --security-opt no-new-privileges.
+  # ---------------------------------------------------------------------------
+
+  deploy:image:
+    desc: 'Single Docker host: build acme-service:<TAG> from the Dockerfile and assert a non-root image user: task deploy:image TAG=sha-abc1234 (Render deploys on push).'
+    requires:
+      vars: [TAG]
+    vars:
+      IMAGE: '{{.IMAGE_NAME}}:{{.TAG}}'
+    env:
+      DEPLOY_TAG: '{{.TAG}}'
+      DEPLOY_IMAGE: '{{.IMAGE}}'
+    preconditions:
+      - sh: 'case "$DEPLOY_TAG" in "") ;; [!A-Za-z0-9_]*|*[!A-Za-z0-9_.-]*) exit 1 ;; esac'
+        msg: 'TAG may only contain letters, digits, _ . - and must not start with . or -'
+      - sh: 'img="$DEPLOY_IMAGE"; tag="${img##*:}"; case "$img" in *:*) ;; *) exit 1 ;; esac; case "$tag" in ""|latest|main|*/*) exit 1 ;; esac'
+        msg: "Image '{{.IMAGE}}' has no exact tag: use TAG=sha-<short> or a version such as 1.2.3 (empty, latest and main are rejected so a rollback names an exact image)."
+      - sh: docker info
+        msg: 'Docker is not running: start Docker and retry.'
+    cmds:
+      - docker build -f Dockerfile -t {{.IMAGE}} .
+      - cmd: |
+          user="$(docker image inspect --format '{{"{{"}}.Config.User{{"}}"}}' "$DEPLOY_IMAGE")"
+          name="${user%%:*}"
+          if [ -z "$name" ] || [ "$name" = "0" ] || [ "$name" = "root" ]; then
+            echo "Image $DEPLOY_IMAGE runs as '${user}': the runtime stage must set a non-root USER." >&2
+            exit 1
+          fi
+          echo "Image $DEPLOY_IMAGE runs as non-root user '${user}'."
+        silent: true
+
+  deploy:migrate:
+    desc: 'Single Docker host: run the one-shot migrate container (hardened, Production, Hangfire schema; local image only): task deploy:migrate TAG=sha-abc1234 ENV_FILE=<file> [MIGRATE_ENV_FILE=<file>] [NETWORK=<net>] (Render deploys on push).'
+    vars:
+      IMAGE: '{{if .IMAGE}}{{.IMAGE}}{{else if .TAG}}{{.IMAGE_NAME}}:{{.TAG}}{{end}}'
+      MIGRATE_ENV_FILE: '{{if .MIGRATE_ENV_FILE}}{{.MIGRATE_ENV_FILE}}{{else if .ENV_FILE}}{{.ENV_FILE}}{{end}}'
+      NETWORK: '{{.NETWORK | default ""}}'
+    env:
+      DEPLOY_IMAGE: '{{.IMAGE}}'
+      DEPLOY_TAG: '{{.TAG | default ""}}'
+      DEPLOY_NETWORK: '{{.NETWORK}}'
+      DEPLOY_ENV_FILE: '{{.ENV_FILE | default ""}}'
+      DEPLOY_MIGRATE_ENV_FILE: '{{.MIGRATE_ENV_FILE}}'
+    preconditions:
+      - sh: 'case "$DEPLOY_TAG" in "") ;; [!A-Za-z0-9_]*|*[!A-Za-z0-9_.-]*) exit 1 ;; esac'
+        msg: 'TAG may only contain letters, digits, _ . - and must not start with . or -'
+      - sh: 'case "$DEPLOY_IMAGE" in "") ;; [!a-z0-9]*|*[!A-Za-z0-9._/:@-]*) exit 1 ;; esac'
+        msg: 'IMAGE may only contain letters, digits and . _ / : @ - (for example ghcr.io/<owner>/acme-service:sha-abc1234).'
+      - sh: 'case "$DEPLOY_NETWORK" in "") ;; [!A-Za-z0-9]*|*[!A-Za-z0-9_.-]*) exit 1 ;; esac'
+        msg: 'NETWORK may only contain letters, digits, _ . - (for example acme-service_default).'
+      - sh: 'img="$DEPLOY_IMAGE"; tag="${img##*:}"; case "$img" in *:*) ;; *) exit 1 ;; esac; case "$tag" in ""|latest|main|*/*) exit 1 ;; esac'
+        msg: "Image '{{.IMAGE}}' has no exact tag: pass TAG=sha-<short> (or IMAGE=<repo>:<tag>); empty, latest, main and untagged images are rejected."
+      - sh: 'test -f "$DEPLOY_MIGRATE_ENV_FILE"'
+        msg: "Env file '{{.MIGRATE_ENV_FILE}}' not found: pass ENV_FILE=<file> or MIGRATE_ENV_FILE=<file> (an uncommitted file holding ConnectionStrings__PostgresMigrations and ConnectionStrings__Postgres)."
+      - sh: '! git ls-files --error-unmatch -- "$DEPLOY_MIGRATE_ENV_FILE" >/dev/null 2>&1'
+        msg: "Env file '{{.MIGRATE_ENV_FILE}}' is tracked by git: secrets must live in an uncommitted file outside version control (INV-11)."
+      - sh: docker info
+        msg: 'Docker is not running: start Docker and retry.'
+      - sh: 'docker image inspect "$DEPLOY_IMAGE" >/dev/null 2>&1'
+        msg: "Image '{{.IMAGE}}' is not present locally: run task deploy:image TAG=<tag> or docker pull {{.IMAGE}} first (deploy tasks never pull with an env file attached)."
+    cmds:
+      - cmd: |
+          if [ "$DEPLOY_MIGRATE_ENV_FILE" = "$DEPLOY_ENV_FILE" ]; then
+            echo "Note: MIGRATE_ENV_FILE defaults to ENV_FILE; the app env file should not hold ConnectionStrings__PostgresMigrations, so pass a separate MIGRATE_ENV_FILE."
+          fi
+        silent: true
+      - docker run --rm --pull never --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m --cap-drop ALL --security-opt no-new-privileges {{if .NETWORK}}--network {{.NETWORK}} {{end}}--env-file "$DEPLOY_MIGRATE_ENV_FILE" -e Jobs__Provider=Hangfire -e DOTNET_ENVIRONMENT=Production {{.IMAGE}} migrate
+
+  deploy:run:
+    desc: 'Single Docker host: REPLACE the running container NAME (default acme-service; a few seconds of downtime) with the local image, hardened, restart unless-stopped, bound to BIND:PORT (127.0.0.1:8080): task deploy:run TAG=sha-abc1234 ENV_FILE=<file> (Render deploys on push).'
+    requires:
+      vars: [ENV_FILE]
+    vars:
+      IMAGE: '{{if .IMAGE}}{{.IMAGE}}{{else if .TAG}}{{.IMAGE_NAME}}:{{.TAG}}{{end}}'
+      NAME: '{{.NAME | default "acme-service"}}'
+      PORT: '{{.PORT | default "8080"}}'
+      BIND: '{{.BIND | default "127.0.0.1"}}'
+      NETWORK: '{{.NETWORK | default ""}}'
+    env:
+      DEPLOY_IMAGE: '{{.IMAGE}}'
+      DEPLOY_TAG: '{{.TAG | default ""}}'
+      DEPLOY_NAME: '{{.NAME}}'
+      DEPLOY_PORT: '{{.PORT}}'
+      DEPLOY_BIND: '{{.BIND}}'
+      DEPLOY_NETWORK: '{{.NETWORK}}'
+      DEPLOY_ENV_FILE: '{{.ENV_FILE}}'
+    preconditions:
+      - sh: 'case "$DEPLOY_TAG" in "") ;; [!A-Za-z0-9_]*|*[!A-Za-z0-9_.-]*) exit 1 ;; esac'
+        msg: 'TAG may only contain letters, digits, _ . - and must not start with . or -'
+      - sh: 'case "$DEPLOY_IMAGE" in "") ;; [!a-z0-9]*|*[!A-Za-z0-9._/:@-]*) exit 1 ;; esac'
+        msg: 'IMAGE may only contain letters, digits and . _ / : @ - (for example ghcr.io/<owner>/acme-service:sha-abc1234).'
+      - sh: 'case "$DEPLOY_NAME" in ""|[!a-z0-9]*|*[!a-z0-9_.-]*) exit 1 ;; esac'
+        msg: 'NAME must match ^[a-z0-9][a-z0-9_.-]*$ (for example acme-service).'
+      - sh: 'case "$DEPLOY_NETWORK" in "") ;; [!A-Za-z0-9]*|*[!A-Za-z0-9_.-]*) exit 1 ;; esac'
+        msg: 'NETWORK may only contain letters, digits, _ . - (for example acme-service_default).'
+      - sh: 'case "$DEPLOY_PORT" in ""|*[!0-9]*|??????*) exit 1 ;; esac; [ "$DEPLOY_PORT" -ge 1 ] && [ "$DEPLOY_PORT" -le 65535 ]'
+        msg: 'PORT must be a number from 1 to 65535.'
+      - sh: 'case "$DEPLOY_BIND" in ""|*[!0-9.]*) exit 1 ;; esac'
+        msg: 'BIND must be an IPv4 address (default 127.0.0.1; 0.0.0.0 publishes on every interface).'
+      - sh: 'img="$DEPLOY_IMAGE"; tag="${img##*:}"; case "$img" in *:*) ;; *) exit 1 ;; esac; case "$tag" in ""|latest|main|*/*) exit 1 ;; esac'
+        msg: "Image '{{.IMAGE}}' has no exact tag: pass TAG=sha-<short> (or IMAGE=<repo>:<tag>); empty, latest, main and untagged images are rejected."
+      - sh: 'test -f "$DEPLOY_ENV_FILE"'
+        msg: "Env file '{{.ENV_FILE}}' not found: pass ENV_FILE=<file> (an uncommitted file with the app settings and secrets)."
+      - sh: '! git ls-files --error-unmatch -- "$DEPLOY_ENV_FILE" >/dev/null 2>&1'
+        msg: "Env file '{{.ENV_FILE}}' is tracked by git: secrets must live in an uncommitted file outside version control (INV-11)."
+      - sh: docker info
+        msg: 'Docker is not running: start Docker and retry.'
+      - sh: 'docker image inspect "$DEPLOY_IMAGE" >/dev/null 2>&1'
+        msg: "Image '{{.IMAGE}}' is not present locally: run task deploy:image TAG=<tag> or docker pull {{.IMAGE}} first (deploy tasks never pull with an env file attached)."
+    cmds:
+      - cmd: |
+          if docker container inspect {{.NAME}} >/dev/null 2>&1; then
+            echo "Replacing the existing container {{.NAME}}."
+            docker rm -f {{.NAME}}
+          fi
+      - docker run -d --pull never --name {{.NAME}} --restart unless-stopped --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m --cap-drop ALL --security-opt no-new-privileges {{if .NETWORK}}--network {{.NETWORK}} {{end}}--env-file "$DEPLOY_ENV_FILE" -p {{.BIND}}:{{.PORT}}:8080 {{.IMAGE}}
+
+  deploy:check:
+    desc: 'Single Docker host: fail fast unless container NAME is running, then poll URL/health/ready (default http://127.0.0.1:PORT, from BIND) for 2 to 3.5 minutes until it returns 200: task deploy:check [PORT=8080] [BIND=127.0.0.1] [URL=<url>] [NAME=acme-service] (Render deploys on push).'
+    vars:
+      NAME: '{{.NAME | default "acme-service"}}'
+      PORT: '{{.PORT | default "8080"}}'
+      BIND: '{{.BIND | default "127.0.0.1"}}'
+      CHECK_HOST: '{{if or (eq .BIND "0.0.0.0") (hasPrefix "127." .BIND)}}127.0.0.1{{else}}{{.BIND}}{{end}}'
+      URL: '{{.URL | default (printf "http://%s:%s" .CHECK_HOST .PORT)}}'
+    env:
+      DEPLOY_NAME: '{{.NAME}}'
+      DEPLOY_PORT: '{{.PORT}}'
+      DEPLOY_BIND: '{{.BIND}}'
+      DEPLOY_URL: '{{.URL}}'
+    preconditions:
+      - sh: 'case "$DEPLOY_NAME" in ""|[!a-z0-9]*|*[!a-z0-9_.-]*) exit 1 ;; esac'
+        msg: 'NAME must match ^[a-z0-9][a-z0-9_.-]*$ (for example acme-service).'
+      - sh: 'case "$DEPLOY_PORT" in ""|*[!0-9]*|??????*) exit 1 ;; esac; [ "$DEPLOY_PORT" -ge 1 ] && [ "$DEPLOY_PORT" -le 65535 ]'
+        msg: 'PORT must be a number from 1 to 65535.'
+      - sh: 'case "$DEPLOY_BIND" in ""|*[!0-9.]*) exit 1 ;; esac'
+        msg: 'BIND must be an IPv4 address (default 127.0.0.1).'
+      - sh: 'case "$DEPLOY_URL" in http://*|https://*) ;; *) exit 1 ;; esac; case "$DEPLOY_URL" in *[!A-Za-z0-9._:/-]*) exit 1 ;; esac'
+        msg: 'URL must be http(s)://host[:port] (letters, digits, . _ : / - only).'
+      - sh: command -v curl
+        msg: 'curl is not on PATH: install curl (the runtime image has no shell or curl, so health is checked from the host).'
+      - sh: '[ "$(docker container inspect -f "{{"{{"}}.State.Status{{"}}"}}" "$DEPLOY_NAME" 2>/dev/null)" = "running" ]'
+        msg: 'Container {{.NAME}} is not running (or does not exist): inspect it with docker logs --tail 50 {{.NAME}}'
+    cmds:
+      - cmd: |
+          echo "Waiting 2 to 3.5 minutes at most for {{.URL}}/health/ready (container {{.NAME}}) ..."
+          i=0
+          while [ "$i" -lt 8 ]; do
+            status="$(docker container inspect -f '{{"{{"}}.State.Status{{"}}"}}' {{.NAME}} 2>/dev/null)"
+            if [ "$status" != "running" ]; then
+              echo "Container {{.NAME}} is '${status:-missing}', not running. docker logs --tail 50 {{.NAME}}:" >&2
+              docker logs --tail 50 {{.NAME}} >&2
+              exit 1
+            fi
+            if curl -fs -o /dev/null --retry 3 --retry-delay 5 --retry-all-errors --retry-max-time 15 --max-time 5 "$DEPLOY_URL/health/ready"; then
+              echo "Ready: {{.URL}}/health/ready returned 200."
+              exit 0
+            fi
+            i=$((i + 1))
+          done
+          echo "Not ready: {{.URL}}/health/ready never returned 200. docker logs --tail 50 {{.NAME}}:" >&2
+          docker logs --tail 50 {{.NAME}} >&2
+          exit 1
+        silent: true
+
+  deploy:release:
+    desc: 'Single Docker host: deploy:image, then deploy:migrate, then deploy:run, then deploy:check; a failed migration stops before the app is touched: task deploy:release TAG=sha-abc1234 ENV_FILE=<file> [MIGRATE_ENV_FILE=<file>] [NETWORK=<net>] [PORT=8080] [BIND=127.0.0.1] [NAME=acme-service] (Render deploys on push).'
+    requires:
+      vars: [TAG, ENV_FILE]
+    vars:
+      IMAGE: '{{.IMAGE_NAME}}:{{.TAG}}'
+      MIGRATE_ENV_FILE: '{{.MIGRATE_ENV_FILE | default .ENV_FILE}}'
+      NAME: '{{.NAME | default "acme-service"}}'
+      PORT: '{{.PORT | default "8080"}}'
+      BIND: '{{.BIND | default "127.0.0.1"}}'
+      NETWORK: '{{.NETWORK | default ""}}'
+      URL: '{{.URL | default ""}}'
+    env:
+      DEPLOY_TAG: '{{.TAG}}'
+      DEPLOY_IMAGE: '{{.IMAGE}}'
+      DEPLOY_NAME: '{{.NAME}}'
+      DEPLOY_PORT: '{{.PORT}}'
+      DEPLOY_BIND: '{{.BIND}}'
+      DEPLOY_NETWORK: '{{.NETWORK}}'
+      DEPLOY_URL: '{{.URL}}'
+      DEPLOY_ENV_FILE: '{{.ENV_FILE}}'
+      DEPLOY_MIGRATE_ENV_FILE: '{{.MIGRATE_ENV_FILE}}'
+    preconditions:
+      - sh: 'case "$DEPLOY_TAG" in "") ;; [!A-Za-z0-9_]*|*[!A-Za-z0-9_.-]*) exit 1 ;; esac'
+        msg: 'TAG may only contain letters, digits, _ . - and must not start with . or -'
+      - sh: 'case "$DEPLOY_NAME" in ""|[!a-z0-9]*|*[!a-z0-9_.-]*) exit 1 ;; esac'
+        msg: 'NAME must match ^[a-z0-9][a-z0-9_.-]*$ (for example acme-service).'
+      - sh: 'case "$DEPLOY_NETWORK" in "") ;; [!A-Za-z0-9]*|*[!A-Za-z0-9_.-]*) exit 1 ;; esac'
+        msg: 'NETWORK may only contain letters, digits, _ . - (for example acme-service_default).'
+      - sh: 'case "$DEPLOY_PORT" in ""|*[!0-9]*|??????*) exit 1 ;; esac; [ "$DEPLOY_PORT" -ge 1 ] && [ "$DEPLOY_PORT" -le 65535 ]'
+        msg: 'PORT must be a number from 1 to 65535.'
+      - sh: 'case "$DEPLOY_BIND" in ""|*[!0-9.]*) exit 1 ;; esac'
+        msg: 'BIND must be an IPv4 address (default 127.0.0.1; 0.0.0.0 publishes on every interface).'
+      - sh: 'case "$DEPLOY_URL" in "") exit 0 ;; http://*|https://*) ;; *) exit 1 ;; esac; case "$DEPLOY_URL" in *[!A-Za-z0-9._:/-]*) exit 1 ;; esac'
+        msg: 'URL must be http(s)://host[:port] (letters, digits, . _ : / - only).'
+      - sh: 'img="$DEPLOY_IMAGE"; tag="${img##*:}"; case "$img" in *:*) ;; *) exit 1 ;; esac; case "$tag" in ""|latest|main|*/*) exit 1 ;; esac'
+        msg: "Image '{{.IMAGE}}' has no exact tag: use TAG=sha-<short> or a version such as 1.2.3 (empty, latest and main are rejected)."
+      - sh: 'test -f "$DEPLOY_ENV_FILE"'
+        msg: "Env file '{{.ENV_FILE}}' not found: pass ENV_FILE=<file> (an uncommitted file with the app settings and secrets)."
+      - sh: '! git ls-files --error-unmatch -- "$DEPLOY_ENV_FILE" >/dev/null 2>&1'
+        msg: "Env file '{{.ENV_FILE}}' is tracked by git: secrets must live in an uncommitted file outside version control (INV-11)."
+      - sh: 'test -f "$DEPLOY_MIGRATE_ENV_FILE"'
+        msg: "Migration env file '{{.MIGRATE_ENV_FILE}}' not found."
+      - sh: '! git ls-files --error-unmatch -- "$DEPLOY_MIGRATE_ENV_FILE" >/dev/null 2>&1'
+        msg: "Migration env file '{{.MIGRATE_ENV_FILE}}' is tracked by git: secrets must live in an uncommitted file outside version control (INV-11)."
+      - sh: docker info
+        msg: 'Docker is not running: start Docker and retry.'
+      - sh: command -v curl
+        msg: 'curl is not on PATH: install curl (deploy:check polls /health/ready from the host).'
+    cmds:
+      - task: deploy:image
+        vars: {TAG: '{{.TAG}}'}
+      - task: deploy:migrate
+        vars: {IMAGE: '{{.IMAGE}}', ENV_FILE: '{{.ENV_FILE}}', MIGRATE_ENV_FILE: '{{.MIGRATE_ENV_FILE}}', NETWORK: '{{.NETWORK}}'}
+      - task: deploy:run
+        vars: {IMAGE: '{{.IMAGE}}', ENV_FILE: '{{.ENV_FILE}}', NAME: '{{.NAME}}', PORT: '{{.PORT}}', BIND: '{{.BIND}}', NETWORK: '{{.NETWORK}}'}
+      - task: deploy:check
+        vars: {URL: '{{.URL}}', NAME: '{{.NAME}}', PORT: '{{.PORT}}', BIND: '{{.BIND}}'}
+
+  deploy:render:
+    desc: Print the Render deployment checklist (Render is the primary target and deploys on push; no network calls).
+    silent: true
+    cmds:
+      - cmd: |
+          echo "Render checklist (docs/operations/deployment.md):"
+          echo "  1. In the Render dashboard create a Blueprint from this repository and apply render.yaml."
+          echo "  2. Fill every sync: false secret in the dashboard (nothing is stored in GitHub)."
+          echo "  3. Push: Render deploys after the GitHub checks pass and builds the image itself."
+          echo "  4. The migration runs at container start (the Blueprint enables it); a failed migration exits 1 and the old version keeps serving."
+          echo "  5. Health check path: /health/ready (503 until every module is migrated)."
+          echo "  6. Connection strings are Npgsql key-value strings (Host=...;Port=5432;...;SSL Mode=Require), not postgres:// URLs."

@@ -31,12 +31,12 @@ Things to get right:
 
 **Status:** configuration and SQL, no code change.
 
-The service already separates DDL from DML by connection string: `ConnectionStrings:PostgresMigrations` is used only by the migration Job, `ConnectionStrings:Postgres` by the app. In development both use the `postgres` superuser. In production use two roles:
+The service already separates DDL from DML by connection string: `ConnectionStrings:PostgresMigrations` is used only by the migrate path (the one-shot migration container, or the opt-in `Migrations:RunOnStart` step, which unsets it in-process once the migration succeeded), `ConnectionStrings:Postgres` by the app. In development both use the `postgres` superuser. In production use two roles:
 
 | Role | Used by | Rights |
 | --- | --- | --- |
-| migrator | `migrate` (Kubernetes Secret `acme-service-migrations-secrets`) | Owns every schema of the service; creates and alters tables; runs the seeder. |
-| `app_user` (group, no login) and one or more login roles in it | the app and `auth:grant-role` (Secret `acme-service-secrets`), and the migration Job's `ConnectionStrings__Postgres` | `USAGE` on each schema and `SELECT, INSERT, UPDATE, DELETE` on its tables and sequences; no DDL. |
+| migrator | `migrate` (`ConnectionStrings__PostgresMigrations`, used by the start-up migration on Render) | Owns every schema of the service; creates and alters tables; runs the seeder. |
+| `app_user` (group, no login) and one or more login roles in it | the app and `auth:grant-role` (`ConnectionStrings__Postgres`), and the migration's seeder | `USAGE` on each schema and `SELECT, INSERT, UPDATE, DELETE` on its tables and sequences; no DDL. |
 
 The app uses **one** connection string for every module, so the application role needs DML on all module schemas plus `hangfire`. Truly separate roles per module would require per-module connection strings, which the code does not support. Within one role, schema ownership is still enforced by the code and the architecture tests (INV-06). Granting the rights to a group role and logging in with a member role lets you rotate the application password without downtime ([secrets](secrets.md#rotation)).
 
@@ -79,11 +79,11 @@ ALTER DEFAULT PRIVILEGES FOR ROLE migrator IN SCHEMA orders
     GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO app_user;
 ```
 
-Forgetting it (for example missing `USAGE` on `orders`) makes the readiness migration check fail with `Could not read the migration history.` on every pod, so no pod becomes ready.
+Forgetting it (for example missing `USAGE` on `orders`) makes the readiness migration check fail with `Could not read the migration history.` on every instance, so no instance becomes ready.
 
 <!-- </sample:orders> -->
 
-- Every module schema needs such a block. Add it before deploying the release that introduces the module: without `USAGE` on a module schema the readiness check cannot read that module's migration history and **every** pod stays not ready.
+- Every module schema needs such a block. Add it before deploying the release that introduces the module: without `USAGE` on a module schema the readiness check cannot read that module's migration history and **every** instance stays not ready.
 - For a database that already has tables, also run `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA <schema> TO app_user;` and the same for sequences.
 - The default privileges cover only objects created by `migrator`. Always run `migrate` as `migrator` (not as a second migrator role), or objects it creates are not granted to `app_user`.
 - PostgreSQL advisory locks (used by `migrate`, the seeder and `Locks:Provider=Postgres`) need no grants.
@@ -94,12 +94,12 @@ Forgetting it (for example missing `USAGE` on `orders`) makes the readiness migr
 
 **Status:** configuration only.
 
-Behind an ingress or load balancer, the client's address and scheme arrive in `X-Forwarded-For` and `X-Forwarded-Proto`. The service trusts them only from `Http:ForwardedHeaders:KnownNetworks` (CIDR) and `Http:ForwardedHeaders:KnownProxies` (addresses); `X-Forwarded-Host` is never used. With neither set, only loopback is trusted and a warning is logged at startup outside Development.
+Behind a reverse proxy or load balancer, the client's address and scheme arrive in `X-Forwarded-For` and `X-Forwarded-Proto`. The service trusts them only from `Http:ForwardedHeaders:KnownNetworks` (CIDR) and `Http:ForwardedHeaders:KnownProxies` (addresses); `X-Forwarded-Host` is never used. With neither set, only loopback is trusted and a warning is logged at startup outside Development.
 
-Getting this wrong has two effects: per-IP rate limits see the proxy's address (so all clients share one limit), and the client IPs recorded with refresh tokens and in logs are wrong. Set the network your ingress controller or load balancer connects from, in the overlay's `config-patch.yaml`:
+Getting this wrong has two effects: per-IP rate limits see the proxy's address (so all clients share one limit), and the client IPs recorded with refresh tokens and in logs are wrong. Set the network your reverse proxy or load balancer connects from, as an environment value of the deployment:
 
 ```yaml
-  Http__ForwardedHeaders__KnownNetworks__0: "10.0.0.0/8"     # your pod or node CIDR, not 0.0.0.0/0
+  Http__ForwardedHeaders__KnownNetworks__0: "10.0.0.0/8"     # your proxy's or load balancer's network, not 0.0.0.0/0
 ```
 
 Never trust every network: a client could then forge its address and evade the rate limits.
@@ -123,9 +123,9 @@ Record the decision in a new ADR, since it changes the client contract.
 
 ## Other production checklist items
 
-- **TLS** terminates at your ingress; the app listens on plain HTTP 8080 and calls neither `UseHttpsRedirection` nor `UseHsts`. Enable HSTS and redirects at the ingress. External OIDC login requires HTTPS end to end.
+- **TLS** terminates at your reverse proxy or load balancer; the app listens on plain HTTP 8080 and calls neither `UseHttpsRedirection` nor `UseHsts`. Enable HSTS and redirects at the proxy. External OIDC login requires HTTPS end to end.
 - **OpenAPI and Scalar** stay off outside Development (`OpenApi:Enabled=false`); the Hangfire dashboard cannot be enabled outside Development.
-- **Network policies** are not included in the manifests. Restrict ingress to the app pods to your ingress controller, and egress to PostgreSQL, Redis, object storage, SMTP, the OIDC provider and the OTLP collector.
+- **Network rules** are not part of this repository. Restrict inbound access to the app to your reverse proxy, and outbound access to PostgreSQL, Redis, object storage, SMTP, the OIDC provider and and the OTLP collector.
 - **Image provenance:** pin the base images by digest (Dependabot keeps them current) and scan the image (CI runs Trivy and fails on fixable HIGH or CRITICAL findings).
 - **Redis** with a password and TLS (`ssl=true` in `Cache:Redis:ConnectionString`).
 - **Rate limits** are per replica: the effective limit is the configured value times the replica count. Lockout (5 failures, 15 minutes) is global. Add an edge rate limiter if you need a global per-IP limit.

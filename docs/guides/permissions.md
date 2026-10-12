@@ -50,7 +50,7 @@ Permissions are computed from the user's roles when a token is issued. A role or
 1. Add a constant to the module's `<Module>Permissions` class in its Contracts project, for example `public const string Export = "invoices.export";`, and a `PermissionDefinition` with a description and the seed roles that get it by default.
 2. Make sure the module's `IModule.Permissions` returns the definition.
 3. Protect the endpoint: `.RequirePermission(InvoicesPermissions.Export)`.
-4. Run `migrate` (locally, in Compose or as the Kubernetes Job). Until the seeder has run, no role holds the new permission, so callers get 403.
+4. Run `migrate` (locally, in Compose or as the one-shot container of a deployed environment). Until the seeder has run, no role holds the new permission, so callers get 403.
 5. Users get the permission in their next token.
 
 Renaming a permission is a delete plus an add: the seeder removes the old name with its grants and adds the new one with its defaults. Because only seed roles exist and their permissions are reset on every `migrate`, there are no hand-made grants to lose. The seeder runs in the migration Job, before the old pods are gone, so rename across two releases: add the new name (keeping the old one) in release N, remove the old one in N+1 ([migrations](../operations/migrations.md#expandcontract)).

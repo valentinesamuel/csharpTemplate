@@ -1,20 +1,24 @@
 # Acme.Service CI (plan P22). Enforces every quality gate on pull requests and on main.
 # Supply chain: every action is pinned to a full commit SHA (version in the trailing comment); every downloaded tool
 # and container image is pinned by version AND checksum/digest. Dependabot (.github/dependabot.yml) bumps the actions.
-# Secrets: this workflow uses no repository secrets (INV-11). Nothing is pushed to a registry (OQ-06).
+# Secrets: this workflow uses no repository secrets (INV-11); the only credential is the built-in GITHUB_TOKEN. Pull
+# requests only build and test. The `publish` job (main and v* tags only) is the single job with `packages: write`; it
+# pushes the image to GitHub Container Registry (ghcr.io).
 name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
+    tags: ['v*']
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a main or tag run mid-publish; only superseded pull request runs are cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   DOTNET_NOLOGO: "1"
@@ -197,78 +201,63 @@ jobs:
           docker run --rm -i -v "$GITHUB_WORKSPACE/.gitleaks.toml:/cfg/.gitleaks.toml:ro" "$GITLEAKS_IMAGE" \
             stdin --config /cfg/.gitleaks.toml --redact --no-banner < "$history_file"
 
-  k8s-manifests:
-    name: Kubernetes manifests (kustomize + kubeconform)
+  # Publishes to GHCR on push to main and on v* tags. Pull requests never reach this job.
+  publish:
+    name: Publish image (GHCR)
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [build-test, secrets-scan, docker]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      KUSTOMIZE_VERSION: "5.8.3"
-      KUSTOMIZE_SHA256: cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61
-      KUBECONFORM_VERSION: "0.8.0"
-      KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install kustomize and kubeconform (pinned, checksum-verified)
-        run: |
-          bin="$RUNNER_TEMP/bin"
-          mkdir -p "$bin"
+      # GHCR requires a lowercase repository path.
+      - name: Compute lowercase image name
+        id: image
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: echo "name=ghcr.io/${OWNER,,}/acme-service" >> "$GITHUB_OUTPUT"
 
-          kustomize_tgz="kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$kustomize_tgz" \
-            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/${kustomize_tgz}"
-          echo "${KUSTOMIZE_SHA256}  $RUNNER_TEMP/$kustomize_tgz" | sha256sum --check --strict
-          tar -xzf "$RUNNER_TEMP/$kustomize_tgz" -C "$bin" kustomize
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-          kubeconform_tgz="kubeconform-linux-amd64.tar.gz"
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$kubeconform_tgz" \
-            "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/${kubeconform_tgz}"
-          echo "${KUBECONFORM_SHA256}  $RUNNER_TEMP/$kubeconform_tgz" | sha256sum --check --strict
-          tar -xzf "$RUNNER_TEMP/$kubeconform_tgz" -C "$bin" kubeconform
+      - name: Log in to ghcr.io (GITHUB_TOKEN)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-          echo "$bin" >> "$GITHUB_PATH"
-          "$bin/kustomize" version
-          "$bin/kubeconform" -v
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ steps.image.outputs.name }}
+          flavor: |
+            latest=false
+          tags: |
+            type=sha,format=short,prefix=sha-,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
-      - name: Validate overlays
-        run: scripts/ci/validate-k8s.sh
-
-  # ---------------------------------------------------------------------------------------------------------------
-  # Registry push: NOT enabled (OQ-06). Example only. To enable, pick a registry, create an IAM role that trusts
-  # GitHub's OIDC provider (no long-lived keys, no repo secrets), set the repository variables referenced below,
-  # uncomment, and re-resolve the pinned SHAs. Shown for AWS ECR; Azure (azure/login) and GCP
-  # (google-github-actions/auth) follow the same id-token pattern.
-  #
-  # publish:
-  #   name: Publish image (OIDC)
-  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-  #   needs: [build-test, secrets-scan, docker, k8s-manifests]
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 20
-  #   environment: production-registry
-  #   permissions:
-  #     contents: read
-  #     id-token: write # OIDC token for the cloud provider; nothing else is granted
-  #   steps:
-  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-  #       with:
-  #         persist-credentials: false
-  #     - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-  #       with:
-  #         role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
-  #         aws-region: ${{ vars.AWS_REGION }}
-  #     - id: ecr
-  #       uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
-  #     - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-  #     - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-  #       with:
-  #         context: .
-  #         push: true
-  #         provenance: mode=max
-  #         sbom: true
-  #         tags: ${{ steps.ecr.outputs.registry }}/acme-service:${{ github.sha }}
-  #         cache-from: type=gha
-  # ---------------------------------------------------------------------------------------------------------------
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

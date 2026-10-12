@@ -7,7 +7,7 @@ namespace Acme.Service.BuildingBlocks.Persistence.Health;
 
 /// <summary>
 /// Readiness check (D-20): unhealthy while any module context has pending migrations, so an app started
-/// before <c>migrate</c> stays out of rotation; the app never migrates itself (INV-16). Results are cached
+/// before <c>migrate</c> stays out of rotation; the web host never migrates itself (INV-16). Results are cached
 /// for <see cref="CacheDuration"/>; a failure to read the migration history is not cached.
 /// </summary>
 public sealed class PendingMigrationsHealthCheck(

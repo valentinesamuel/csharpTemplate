@@ -1,0 +1,79 @@
+# Render Blueprint: builds the root Dockerfile and runs the image. See docs/operations/deployment.md.
+#
+# Every `sync: false` value is a secret or a deployment-specific choice. Render asks for it once, in the dashboard, when
+# the Blueprint is first applied; it never lives in the repository (INV-11). Names are the .NET configuration keys with
+# `__` for `:` (docs/guides/configuration.md). The Postgres strings must be Npgsql key-value format, not a postgres:// URL:
+#   Host=...;Port=5432;Database=...;Username=...;Password=...;SSL Mode=Require
+services:
+  - type: web
+    name: acme-service
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeployTrigger: checksPass # deploy a push to the branch only after its GitHub checks pass
+    healthCheckPath: /health/ready # 503 until every module is migrated, so a failed migration never takes traffic
+    envVars:
+      # Schema changes: the container migrates before the web app starts (Migrations:RunOnStart, INV-16, ADR-0009). It needs
+      # ConnectionStrings__PostgresMigrations below. A failed migration exits 1 before any port opens, so the deploy fails and
+      # the previous version keeps serving. Replicas that start together are serialised by a Postgres advisory lock.
+      - key: Migrations__RunOnStart
+        value: "true"
+      # Runtime shape
+      - key: PORT
+        value: "8080" # the image listens on 8080 (ASPNETCORE_HTTP_PORTS)
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: DOTNET_ENVIRONMENT # the migrate verb reads this one
+        value: Production
+      - key: Http__ForwardedHeaders__TrustAllProxies
+        value: "true" # Render's edge is the only way to reach the service and its proxy addresses are dynamic
+      - key: Jobs__Provider
+        value: Hangfire
+      - key: Locks__Provider
+        value: Postgres
+      - key: Cache__Provider
+        value: InMemory # set Redis plus Cache__Redis__ConnectionString to share a cache across instances
+      - key: Notifications__Provider
+        value: Smtp
+
+      # Database
+      - key: ConnectionStrings__Postgres
+        sync: false
+      - key: ConnectionStrings__PostgresMigrations # DDL-capable role, used by the start-up migration
+        sync: false
+
+      # JWT key ring (docs/operations/key-rotation.md)
+      - key: Auth__Jwt__SigningKeys__0__Kid
+        sync: false
+      - key: Auth__Jwt__SigningKeys__0__Status
+        value: Active
+      - key: Auth__Jwt__SigningKeys__0__PrivateKeyBase64 # base64 of the RSA private key PEM (2048 bits or more)
+        sync: false
+
+      # Client pages for emailed links
+      - key: Auth__Links__ConfirmEmailUrl
+        sync: false
+      - key: Auth__Links__ResetPasswordUrl
+        sync: false
+
+      # Blob storage: Blob__Provider is S3 or AzureBlob (Local is rejected in Production)
+      - key: Blob__Provider
+        sync: false
+      - key: Blob__S3__Bucket
+        sync: false
+      - key: Blob__S3__Region
+        sync: false
+      - key: Blob__S3__AccessKey
+        sync: false
+      - key: Blob__S3__SecretKey
+        sync: false
+
+      # SMTP relay
+      - key: Notifications__Smtp__Host
+        sync: false
+      - key: Notifications__Smtp__From
+        sync: false
+      - key: Notifications__Smtp__Username
+        sync: false
+      - key: Notifications__Smtp__Password
+        sync: false

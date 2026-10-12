@@ -10,7 +10,7 @@ What you get out of the box:
 - **A self-contained Auth module.** ASP.NET Core Identity, RS256 access tokens from a rotating key ring, single-use refresh tokens with reuse detection, TOTP MFA, RBAC with permissions in the token, and an optional external OIDC login. Authorization fails closed.
 - **Reliable messaging.** A transactional outbox per module, idempotent inbox consumers, a dead-letter state, and background jobs.
 - **Swappable infrastructure.** Cache (in-memory, Redis), blob storage (local disk, S3-compatible, Azure Blob), email (console, SMTP), jobs (in-memory, Hangfire on PostgreSQL) and distributed locks (in-memory, PostgreSQL advisory locks), each selected by one configuration value.
-- **Operations.** RFC 7807 errors everywhere, Serilog and OpenTelemetry, liveness and readiness probes, a `migrate` verb that runs as a separate job, a non-root container image, Docker Compose for local work, Kustomize manifests and GitHub Actions CI.
+- **Operations.** RFC 7807 errors everywhere, Serilog and OpenTelemetry, liveness and readiness probes, a `migrate` verb that runs as a separate job, a non-root container image, Docker Compose for local work, and GitHub Actions CI that publishes the image to GHCR.
 
 <!-- <sample:orders> -->
 
@@ -20,7 +20,16 @@ The Orders module (`src/Modules/Orders/`) is a removable sample that demonstrate
 
 ## Quick start
 
-Prerequisites: the .NET SDK pinned in `global.json`, and Docker. From the repository root:
+Prerequisites: the .NET SDK pinned in `global.json`, and Docker. Optionally [Task](https://taskfile.dev/installation) (`brew install go-task`, `winget install Task.Task`), which runs every command below by name from `Taskfile.yml` ([task commands](docs/guides/task-commands.md)). From the repository root:
+
+```bash
+task dev:setup   # tools, locked restore, deploy/compose/.env (once), PostgreSQL
+task b           # Release build
+task up          # full stack in Docker Compose
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/health/ready
+```
+
+Without `task`:
 
 ```bash
 dotnet tool restore
@@ -36,13 +45,14 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/health/ready
 4. Starts PostgreSQL, Redis, an S3-compatible store, Azurite, Mailpit, the one-shot `migrate` service and the app.
 5. Prints `200` once the database is migrated and the app is ready.
 
-To start your own service from this template, run `dotnet run scripts/init.cs -- --name Contoso.Billing` on a fresh clone (add `--remove-sample` to drop the Orders sample, `--dry-run` to preview).
+To start your own service from this template, run `task init NAME=Contoso.Billing` on a fresh clone (preview with `task init:dry NAME=Contoso.Billing`; drop the Orders sample with `task init NAME=Contoso.Billing -- --remove-sample`). Without `task`: `dotnet run scripts/init.cs -- --name Contoso.Billing` (add `--remove-sample` to drop the Orders sample, `--dry-run` to preview).
 
 ## Documentation
 
 - [Documentation index](docs/README.md)
 - [Getting started](docs/guides/getting-started.md)
 - [Command cookbook](docs/cookbook.md)
+- [Task commands](docs/guides/task-commands.md)
 - [Configuration reference](docs/guides/configuration.md)
 - [Auth guide](docs/guides/auth.md)
 - [Adding a module](docs/guides/adding-a-module.md)
@@ -51,7 +61,7 @@ To start your own service from this template, run `dotnet run scripts/init.cs --
 - [Request lifecycle](docs/architecture/request-lifecycle.md)
 - [Failure modes](docs/architecture/failure-modes.md)
 - [Architecture decision records](docs/adr/README.md)
-- [Kubernetes manifests](deploy/k8s/README.md)
+- [Deployment](docs/operations/deployment.md)
 
 ## Repository layout
 
@@ -62,6 +72,6 @@ To start your own service from this template, run `dotnet run scripts/init.cs --
 | `src/BuildingBlocks/Infra/` | One project per infrastructure provider |
 | `src/Modules/` | Business modules, each a module project plus a `*.Contracts` project |
 | `tests/` | Unit, integration, architecture and shared test fixtures |
-| `deploy/` | Docker Compose stack and Kustomize manifests |
+| `deploy/` | Docker Compose stack |
 | `scripts/` | `init.cs`, `dev-env.cs` and CI helper scripts |
 | `docs/` | Architecture, decisions and guides |

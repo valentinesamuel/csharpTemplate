@@ -13,8 +13,8 @@ This is the catalogue of failure modes the template was designed against, and wh
 | A development-only provider (`Blob:Provider=Local`, `Notifications:Provider=Console`, `Jobs:Provider=InMemory`, `Locks:Provider=InMemory`) in `Production` | Startup fails. `Cache:Provider=InMemory` is allowed but logs a warning because idempotency then works per replica only. | `tests/Acme.Service.IntegrationTests/ProviderSelectionTests.cs` |
 | JWT key ring misconfigured (no or two `Active` keys, duplicate `Kid`, RSA below 2048 bits, both or neither key source) | Startup fails; it never falls back to an insecure mode. | `tests/Acme.Service.Modules.Auth.Tests/Tokens/KeyRingStartupTests.cs` |
 | External OIDC enabled with incomplete settings | Startup fails (Authority, ClientId, ClientSecret, non-empty `AllowedReturnUrls`, `openid` scope; HTTPS authority outside Development). | `tests/Acme.Service.Modules.Auth.Tests/Unit/ExternalLoginUnitTests.cs` |
-| A Kubernetes Secret is missing | The pod fails at start through options validation and never becomes ready; the previous ReplicaSet keeps serving. | |
-| `Http:ForwardedHeaders` has no known networks or proxies outside Development | A startup warning; only loopback proxies are trusted, so behind an ingress every client appears as the proxy's address. | |
+| A required secret or setting is missing from the Render environment | The instance fails at start through options validation, naming the key, and never becomes ready; on Render the previous deploy keeps serving. | |
+| `Http:ForwardedHeaders` has no known networks or proxies (and `TrustAllProxies` is off) outside Development | A startup warning; only loopback proxies are trusted, so behind a proxy every client appears as the proxy's address. | |
 
 ## HTTP pipeline
 
@@ -48,7 +48,7 @@ This is the catalogue of failure modes the template was designed against, and wh
 | PostgreSQL blip during a command | Not retried unless the input implements `IRetryableCommand`; the transaction rolls back and the client gets 503 `database_unavailable` with `Retry-After: 5`. Retrying with the same `Idempotency-Key` never creates a duplicate. | `PostgresBlipTests` (integration tests) |
 | Concurrent update of the same row | 409 `concurrency_conflict` (optimistic concurrency on `xmin`). | `tests/Acme.Service.BuildingBlocks.Tests/Persistence/EfUnitOfWorkTests.cs` |
 | Unique constraint violation | 409 `unique_violation`. | `tests/Acme.Service.BuildingBlocks.Tests/Persistence/EfUnitOfWorkTests.cs` |
-| The app starts before `migrate` ran | The app never migrates; `/health/ready` is 503 while any module has pending migrations, so no traffic is routed to it. | `tests/Acme.Service.IntegrationTests/ReadinessTests.cs` |
+| The app starts before `migrate` ran | The web host never migrates (unless `Migrations:RunOnStart=true`, where the container migrates first and exits 1 before any port opens on failure); `/health/ready` is 503 while any module has pending migrations, so no traffic is routed to it. | `tests/Acme.Service.IntegrationTests/ReadinessTests.cs` |
 | Two `migrate` runs at once (two Jobs, or compose and a manual run) | `MigrationRunner` holds the PostgreSQL advisory lock `migrate` for the whole run, including the Hangfire schema step and the seeder, so runs are serialised. The seeder also takes its own transaction-level advisory lock. | `tests/Acme.Service.BuildingBlocks.Tests/Persistence/MigrationRunnerTests.cs` |
 | Connection-string password in logs | Never logged; options validation messages name keys, not values. | |
 | Identity tables migrated with default PascalCase names | The Identity model is mapped by hand on `AuthDbContext` with snake_case tables, columns and index names in the `auth` schema, so the generated migration uses snake_case names throughout. | `tests/Acme.Service.Modules.Auth.Tests/Seeding/AuthMigrationTests.cs` |
@@ -102,7 +102,7 @@ Note: the plan asks for "queries retry, commands return 503". The command half h
 | Large uploads | Streamed, never buffered whole; Azure uploads in 8 MiB blocks, 4 in flight. | `tests/Acme.Service.Infra.Tests/S3/S3BlobStoreContractTests.cs` |
 | Transient 5xx from the store | The cloud SDKs' default retry policies apply. | |
 | Download URL expiry too long | Capped at 15 minutes; zero or negative expiry throws. Providers without URLs (local disk) return null and the caller streams. | `tests/Acme.Service.Infra.Tests/S3/S3PresignTests.cs` |
-| Local blob provider with a read-only root filesystem | Cannot happen in Kubernetes: `Blob:Provider=Local` is refused in `Production`. | |
+| Local blob provider with a read-only root filesystem | Cannot happen in a deployed (`Production`) environment: `Blob:Provider=Local` is refused in `Production`. | |
 
 ## Email
 
@@ -170,9 +170,9 @@ Note: the plan asks for "queries retry, commands return 503". The command half h
 | Compose: a host port is already taken | Override the `*_PORT` variables in `deploy/compose/.env`; all ports bind to 127.0.0.1. | `deploy/compose/.env.example` |
 | Debugging the chiseled image | No shell in the image: use `docker debug` or run the SDK image against the same configuration. | |
 | Apple Silicon | Base images are multi-arch; the S3-compatible test and compose store is RustFS because MinIO images were not pullable. | |
-| Kubernetes rolling update with a schema change | Apply the migration Job first and wait for it (`deploy/k8s/README.md`). New pods are not ready until their migrations are applied; old pods keep serving, which requires expand-and-contract migrations. | |
-| The migration Job fails | `kubectl wait` fails and the deploy stops before the app manifests are applied. | |
-| Config-only change | ConfigMap changes need `kubectl rollout restart`. | |
+| Rolling update with a schema change | Run the one-shot `migrate` container first and wait for it ([deployment](../operations/deployment.md)). New instances are not ready until their migrations are applied; old instances keep serving, which requires expand-and-contract migrations. | |
+| The `migrate` container fails | It exits non-zero and the deploy stops before the app is started or updated. | |
+| Config-only change | Environment values are read at start; redeploy or restart the instances to apply them. | |
 | CI: flaky containers | The integration step is retried once and the retry is reported as a warning. | `.github/workflows/ci.yml` |
 | CI: a new vulnerability in a dependency | High and critical NuGet advisories fail the build; low and moderate stay warnings. | `scripts/ci/check-vulnerable.sh` |
 | CI: compromised third-party action | Every action is pinned by full commit SHA. CI uses no repository secrets. | `.github/workflows/ci.yml` |

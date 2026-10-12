@@ -4,13 +4,17 @@
 
 Every command in this document was executed once on a fresh copy of the repository (a new directory with a single commit and a clean `git status`), and its outcome is the "Expected output" you see. The results table is in the project's verification log. Commands run from the repository root unless stated. Placeholders such as `<Id>` or `<proj>` are yours to fill in; never paste real secrets into documents, tickets or shell history.
 
-Contents: [tools](#tools) | [packages](#packages-under-central-package-management) | [EF migrations](#ef-core-migrations) | [tests](#tests) | [formatting](#formatting) | [build and publish](#build-and-publish) | [local run](#local-run) | [Docker and Compose](#docker-and-compose) | [template init](#template-init) | [auth operations](#auth-operations) | [Kubernetes and CI checks](#kubernetes-and-ci-checks)
+Most entries also name the [Task](guides/task-commands.md) command that runs the same thing from the root `Taskfile.yml` ("With task"). `task` is optional; the raw commands below are the reference and are what CI runs.
+
+Contents: [tools](#tools) | [packages](#packages-under-central-package-management) | [EF migrations](#ef-core-migrations) | [tests](#tests) | [formatting](#formatting) | [build and publish](#build-and-publish) | [local run](#local-run) | [Docker and Compose](#docker-and-compose) | [template init](#template-init) | [auth operations](#auth-operations) | [Publish and run the image, and CI checks](#publish-and-run-the-image-and-ci-checks)
 
 ## Tools
 
 ### Restore the pinned local tools
 
 Purpose: install `dotnet-ef` at the version pinned in `.config/dotnet-tools.json`. Needed once per clone, before any `dotnet ef` command.
+
+With task: `task dev:setup` runs it first (then the locked restore, `dev-env` when `.env` is missing, and PostgreSQL).
 
 ```bash
 dotnet tool restore
@@ -23,7 +27,7 @@ Common errors:
 - `Cannot find a manifest file` or `Could not execute because the specified command or file was not found` for `dotnet ef`: you are not in the repository root, or the restore was not run.
 - NuGet source unreachable: check network and `nuget.config`.
 
-Optional host tools used by the CI checks below are not .NET tools: `kubectl` (or `kustomize`), `kubeconform`, `actionlint`, `gitleaks`, `jq`, `docker`. Each entry says how to run it without installing anything but Docker.
+Optional host tools used by the CI checks below are not .NET tools: `actionlint`, `gitleaks`, `jq`, `docker`. Each entry says how to run it without installing anything but Docker.
 
 ## Packages under Central Package Management
 
@@ -91,6 +95,8 @@ Common error: leaving the `PackageVersion` behind is harmless to the build but l
 
 Purpose: list packages with known advisories, direct and transitive. CI fails on High and Critical.
 
+With task: `task ci:vulnerable` (the CI form).
+
 ```bash
 dotnet list Acme.Service.slnx package --vulnerable --include-transitive
 scripts/ci/check-vulnerable.sh        # the CI form; needs jq
@@ -103,6 +109,8 @@ Common errors: exit 2 with `jq is not installed` (`brew install jq`); a vulnerab
 ## EF Core migrations
 
 Each module has its own context, schema and migrations. Examples use the Auth module; substitute your module's project and `<Name>DbContext`. Details and review rules: [migrations runbook](operations/migrations.md).
+
+With task, `MODULE` replaces the three options: `task db:add MODULE=Auth NAME=<MigrationName>`, `task db:list MODULE=Auth`, `task db:remove MODULE=Auth`, `task db:script MODULE=Auth` (writes `artifacts/sql/Auth.sql`, gitignored), `task db:migrate` and `task db:migrate:list`.
 
 Shared options (shown once):
 
@@ -155,7 +163,9 @@ Expected output: the script starts with `CREATE SCHEMA` guarded by `IF NOT EXIST
 
 ### Apply migrations locally
 
-Purpose: apply every module's migrations, the Hangfire schema (when configured) and the Auth seed, exactly as the Compose service and the Kubernetes Job do. The web app never migrates.
+Purpose: apply every module's migrations, the Hangfire schema (when configured) and the Auth seed, exactly as the Compose service and the one-shot `migrate` container of a deployed environment do. The web host composition never migrates; with `Migrations__RunOnStart=true` (set on Render) the container runs this same step before starting the app.
+
+With task: `task docker:up:infra`, then `task db:migrate` (it sets `DOTNET_ENVIRONMENT=Development` itself).
 
 ```bash
 docker compose -f deploy/compose/compose.yaml up -d --wait postgres
@@ -171,6 +181,8 @@ Common errors:
 
 ### List pending migrations
 
+With task: `task db:migrate:list`.
+
 ```bash
 DOTNET_ENVIRONMENT=Development dotnet run --project src/Host/Acme.Service.Host -- migrate --list
 ```
@@ -181,17 +193,17 @@ Expected output (after the `DBG` lines): `auth (AuthDbContext): 4 pending` with 
 
 Test docs: [testing guide](guides/testing.md). Integration tests start Testcontainers, so Docker must be running; unit and architecture tests need no Docker.
 
-| Purpose | Command |
-| --- | --- |
-| Everything | `dotnet test Acme.Service.slnx -c Release` |
-| Unit and architecture only | `dotnet test Acme.Service.slnx -c Release --filter "Category!=Integration"` |
-| Integration only | `dotnet test Acme.Service.slnx -c Release --filter "Category=Integration"` |
-| One project | `dotnet test tests/Acme.Service.Modules.Auth.Tests -c Release` |
-| Architecture rules | `dotnet test Acme.Service.slnx -c Release --filter "FullyQualifiedName~ArchitectureTests"` |
-| One test class or method | `dotnet test Acme.Service.slnx -c Release --filter "FullyQualifiedName~RefreshTokenTests"` |
-| With coverage | `dotnet test Acme.Service.slnx -c Release --filter "Category!=Integration" --collect "XPlat Code Coverage"` |
+| Purpose | With task | Command |
+| --- | --- | --- |
+| Everything | `task test` | `dotnet test Acme.Service.slnx -c Release` |
+| Unit and architecture only | `task t` | `dotnet test Acme.Service.slnx -c Release --filter "Category!=Integration"` |
+| Integration only | `task test:integration` | `dotnet test Acme.Service.slnx -c Release --filter "Category=Integration"` |
+| One project | `task test:one PROJECT=tests/Acme.Service.Modules.Auth.Tests` | `dotnet test tests/Acme.Service.Modules.Auth.Tests -c Release` |
+| Architecture rules | `task test:arch` | `dotnet test Acme.Service.slnx -c Release --filter "FullyQualifiedName~ArchitectureTests"` |
+| One test class or method | `task test:one PROJECT=<test project> -- --filter "FullyQualifiedName~<Class>"` | `dotnet test Acme.Service.slnx -c Release --filter "FullyQualifiedName~RefreshTokenTests"` |
+| With coverage | `task test:cov` (into `TestResults/coverage`) | `dotnet test Acme.Service.slnx -c Release --filter "Category!=Integration" --collect "XPlat Code Coverage"` |
 
-Add `--no-build` after a Release build to skip recompiling.
+Add `--no-build` after a Release build to skip recompiling (with task, after `--`: `task t -- --no-build`). The `test`, `test:unit`, `test:integration` and `test:arch` tasks already pass a `--filter`; narrow a run with `test:one` or the raw command instead of adding a second filter.
 
 Expected output: one `Passed!  - Failed: 0, Passed: <n>, Skipped: 0, Total: <n>, Duration: ...` line per test assembly (unit run: Auth 194, BuildingBlocks 254, Infra 325, Architecture 23 and so on; the integration run adds the Docker-backed tests, roughly 3 to 4 minutes the first time while images are pulled). With a filter, assemblies without a match print `No test matches the given testcase filter` and do not fail the run, so the line to look for is the `Passed!` of the assembly you meant. Coverage writes `tests/<project>/TestResults/<guid>/coverage.cobertura.xml` (gitignored); the paths are listed under `Attachments:`.
 
@@ -205,6 +217,8 @@ Common errors:
 
 Purpose: style and analyzer rules from `.editorconfig`; CI runs the verify form (INV-21).
 
+With task: `task f` fixes in place and `task dev:format:check` verifies (both without `--no-restore`).
+
 ```bash
 dotnet format Acme.Service.slnx --no-restore                        # fix in place
 dotnet format Acme.Service.slnx --verify-no-changes --no-restore    # CI form
@@ -213,6 +227,8 @@ dotnet format Acme.Service.slnx --verify-no-changes --no-restore    # CI form
 Expected output: no output and exit 0 when the tree is already formatted; the verify form prints one `error WHITESPACE: Fix whitespace formatting` (or similar) line per offending file and exits 2 when anything would change. Common error: restore failures when you omit `--no-restore` while offline; run `dotnet restore Acme.Service.slnx` first.
 
 ## Build and publish
+
+With task: `task dev:restore` (locked) and `task b` (Release build; restores implicitly). There is no publish task.
 
 ```bash
 dotnet restore Acme.Service.slnx --locked-mode
@@ -227,6 +243,8 @@ Expected output: `Build succeeded.` with `0 Warning(s)` and `0 Error(s)` (warnin
 ### Generate the development environment
 
 Purpose: create `deploy/compose/.env` (gitignored, mode 0600) with a fresh RSA-3072 signing key and random database, Redis and S3 passwords.
+
+With task: `task dev:env` (a no-op when the file exists; `--force` stays a raw command on purpose).
 
 ```bash
 dotnet run scripts/dev-env.cs
@@ -248,6 +266,8 @@ dotnet user-secrets clear --project src/Host/Acme.Service.Host     # remove ever
 Expected output: `Successfully saved <key> to the secret store.` for each; `clear` prints nothing and a following `list` prints `No secrets configured for this application.` The keys are `Auth:Jwt:SigningKeys:0:Kid`, `:Status`, `:PrivateKeyBase64`, `ConnectionStrings:Postgres` and `ConnectionStrings:PostgresMigrations`. User secrets are read only in the Development environment.
 
 ### Run the Host
+
+With task: `task docker:up:infra`, `task db:migrate`, then `task r` (or `task dev:watch`).
 
 ```bash
 docker compose -f deploy/compose/compose.yaml up -d --wait postgres
@@ -273,6 +293,8 @@ Expected output: a multi-stage build ending with `naming to docker.io/library/ac
 
 ### Start, stop, logs
 
+With task: `task up`, `task docker:logs SVC=app` (follow: `task docker:logs SVC=app -- -f`), `task docker:ps`, `task down`.
+
 ```bash
 docker compose -f deploy/compose/compose.yaml up -d --build
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/health/ready
@@ -296,6 +318,8 @@ Expected output: the image is rebuilt (cached layers are reused until a project 
 
 ### Run migrate (and other verbs) in Compose
 
+With task: `task docker:migrate` and `task docker:grant-admin EMAIL=<email>`.
+
 ```bash
 docker compose -f deploy/compose/compose.yaml run --rm migrate
 docker compose -f deploy/compose/compose.yaml run --rm migrate migrate --list
@@ -306,6 +330,8 @@ Expected output: the same log lines as the local run without the debug noise (`H
 
 ### Reset volumes (start from an empty database)
 
+With task: `task docker:reset` (asks for confirmation; `task --yes docker:reset` does not).
+
 ```bash
 docker compose -f deploy/compose/compose.yaml down -v
 ```
@@ -315,6 +341,8 @@ Expected output: the containers, the network and the three volumes (`acme-servic
 ## Template init
 
 Purpose: turn a clean clone of the template into your own service. Run on a fresh clone with a clean working tree (the script refuses otherwise unless `--force`). Name rule: dotted PascalCase such as `Contoso.Billing`.
+
+With task: `task init:dry NAME=Contoso.Billing`, `task init NAME=Contoso.Billing` and `task init NAME=Contoso.Billing -- --remove-sample`. After init the Taskfile names the new solution, so `task dev:format`, `task b` and `task t` work as before; the force-evaluate restore stays raw.
 
 ```bash
 dotnet run scripts/init.cs -- --name Contoso.Billing --dry-run          # preview, writes nothing
@@ -333,13 +361,15 @@ dotnet test Contoso.Billing.slnx -c Release --filter "Category!=Integration"
 
 Expected output: the dry run lists renames and ends with `708 files to edit (3256 token replacements, 0 sample lines), 45 renames; 0 binary files skipped.` and `Dry run: nothing was written.` The real run ends with `Done. The template is now Contoso.Billing. Next steps:`. Variant B reports `2 directories and 4 files to delete, 610 files to edit (2755 token replacements, 284 sample lines), 39 renames`. After either variant: restore, format, a Release build with 0 warnings, unit tests all passing (variant A: Orders tests included; variant B: Auth, BuildingBlocks, Infra and Architecture tests), `dotnet restore ... --locked-mode` and `dotnet format --verify-no-changes` pass, and no occurrence of the template tokens remains (INV-23). Exit codes: 0 success, 1 refusal (dirty tree or already initialized), 2 invalid name or arguments.
 
-Common errors: exit 1 `Refusing to run: The git working tree has uncommitted changes`; exit 2 `Invalid --name '<x>'. Use PascalCase dotted segments` for a name that is not dotted PascalCase with at least two segments; skipping the force-evaluate restore fails the locked restore with a lock file mismatch, because the lock files name the projects. Also set your registry in `deploy/k8s/**/kustomization.yaml` as the script's last line says.
+Common errors: exit 1 `Refusing to run: The git working tree has uncommitted changes`; exit 2 `Invalid --name '<x>'. Use PascalCase dotted segments` for a name that is not dotted PascalCase with at least two segments; skipping the force-evaluate restore fails the locked restore with a lock file mismatch, because the lock files name the projects.
 
 ## Auth operations
 
 ### Grant the Admin role
 
 Purpose: bootstrap the first administrator; there is no default account. The user must have registered first ([getting started](guides/getting-started.md#4-make-a-first-authenticated-call)).
+
+With task (Docker Compose): `task docker:grant-admin EMAIL=<email>`.
 
 ```bash
 # local dotnet run (needs the user secrets, PostgreSQL up and migrated)
@@ -363,40 +393,21 @@ openssl pkey -in signing-key-1.pem -noout -text | head -1          # prints: Pri
 
 Expected output: no output from the first three commands, exit 0; the PEM starts with `-----BEGIN PRIVATE KEY-----`; the base64 file is about 3.3 KB on one line. Common errors: `openssl: command not found` (install OpenSSL or LibreSSL). Never commit the files (gitleaks fails the build if you do); choose a unique `Kid` as described in the rotation runbook. For a local development environment it is simpler to run `dotnet run scripts/dev-env.cs -- --force`.
 
-## Kubernetes and CI checks
+## Publish and run the image, and CI checks
 
-### Render the overlays
+### Publish and run the image
 
-Purpose: see exactly what would be applied. Overlays: `deploy/k8s/overlays/{dev,qa,prod}` (app) and `deploy/k8s/migration/overlays/{dev,qa,prod}` (migration Job).
+With task, on a single Docker host: `task deploy:release TAG=<tag> ENV_FILE=<file>` builds, migrates, runs and checks; to run the GHCR image, `docker pull` it first and pass `IMAGE=ghcr.io/<owner>/acme-service:<tag>` to `task deploy:migrate` and `task deploy:run` ([deploy with task](operations/deployment.md#deploy-with-task)).
 
-```bash
-kubectl kustomize deploy/k8s/overlays/dev
-kustomize build deploy/k8s/overlays/dev          # equivalent, when kustomize is installed
-kubectl kustomize deploy/k8s/migration/overlays/prod
-```
-
-Expected output: YAML documents separated by `---`: ServiceAccount, ConfigMap, Service, Deployment, PodDisruptionBudget and HorizontalPodAutoscaler for the app overlays (6 objects), ConfigMap and Job for the migration overlays (2 objects); no `Secret` objects, ever (INV-11). Exit 0 for all six overlays. Common error: `kubectl` older than 1.14 has no `kustomize` subcommand.
-
-`kubectl apply --dry-run=client -f -` on the rendered output is not a substitute for validation: kubectl needs a reachable cluster for API discovery even in client mode, and without one it exits 1 with `couldn't get current server API group list ... connection refused`. Use the next entry instead.
-
-### Validate the manifests
-
-Purpose: render every overlay and validate it against the Kubernetes schemas; also fails if a `Secret` is rendered. This is the CI job `k8s-manifests`.
+Reference only: not executed in this environment (it needs a real GHCR push). CI builds the image on every push and pull request; the `publish` job pushes it to `ghcr.io/<owner lowercased>/acme-service` only on a push to `main` (tags `sha-<short>` and `main`) and on `v*` tags (semver tags and `latest`). Pull requests only build. Pull the image (a private GHCR package needs `docker login ghcr.io` with a token that has `read:packages`) and run it with its settings as plain environment variables (on Render, the Blueprint builds the root `Dockerfile` itself and these steps are not needed; [secrets](operations/secrets.md), [deployment](operations/deployment.md)):
 
 ```bash
-scripts/ci/validate-k8s.sh
+docker pull ghcr.io/<owner>/acme-service:<tag>
+docker run --rm --read-only --tmpfs /tmp --env-file <env file> \
+  ghcr.io/<owner>/acme-service:<tag>
 ```
 
-Requires `kubeconform` and `kustomize` or `kubectl` on the `PATH`. Without installing kubeconform, put a one-line wrapper first in the `PATH`:
-
-```bash
-mkdir -p "$HOME/.local/kc-bin"
-printf '#!/usr/bin/env bash\nexec docker run --rm -i ghcr.io/yannh/kubeconform:v0.8.0 "$@"\n' > "$HOME/.local/kc-bin/kubeconform"
-chmod +x "$HOME/.local/kc-bin/kubeconform"
-PATH="$HOME/.local/kc-bin:$PATH" scripts/ci/validate-k8s.sh
-```
-
-Expected output: for each of the six overlays `==> deploy/k8s/...` and `Summary: 6 resources found parsing stdin - Valid: 6, Invalid: 0, Errors: 0, Skipped: 0` (2 resources for the migration overlays), then `All Kubernetes overlays rendered and validated.` Exit 1 and `Kubernetes manifest validation FAILED` when something is invalid (not exercised here; taken from the script). Common errors: `error: kubeconform is not installed`; `error: neither kustomize nor kubectl is installed`; schema download failures without network.
+The env file holds every setting and secret (see [configuration](guides/configuration.md)); keep it out of the repository. For the migration, run the same image once with `ConnectionStrings__PostgresMigrations` set and `migrate` after the image name. A missing required key stops startup with a message naming it.
 
 ### Lint the GitHub Actions workflows
 
@@ -419,6 +430,8 @@ docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.0@sha256:691af3c7c5a4
 Expected output: `<n> commits scanned.` or `scanned ~<bytes>` and `no leaks found`, exit 0. A finding prints the rule, file and a redacted match and exits 1: remove the secret, rotate it, and never "fix" it by allowlisting a real credential (only the public Azurite development key is allowlisted, in `.gitleaks.toml`). Common errors: the `git` mode needs the `.git` directory to be inside the mounted folder; on a shallow clone only the fetched commits are scanned.
 
 ### Check the documentation
+
+With task: `task ci:docs` runs the link check (including the sample README while it exists) and the config key check; markdownlint stays raw. `task ci` runs the whole local CI mirror: locked restore, Release build, format gate, unit tests, `ci:vulnerable` and `ci:docs`.
 
 ```bash
 bash scripts/ci/check-doc-links.sh README.md docs src/Modules/Auth/README.md src/BuildingBlocks

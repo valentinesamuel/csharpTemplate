@@ -7,7 +7,7 @@ namespace Acme.Service.BuildingBlocks.Persistence.Migrations;
 
 /// <summary>
 /// Applies EF migrations for every registered module context, in registration order, then runs the
-/// <see cref="IPostMigrationStep"/>s. Used only by the <c>migrate</c> command (INV-16, D-07); register with
+/// <see cref="IPostMigrationStep"/>s. Used only by the <c>migrate</c> command, which the host also runs first when <c>Migrations:RunOnStart</c> is true (INV-16, D-07); register with
 /// <see cref="PersistenceExtensions.AddMigrationRunner"/>, which also switches contexts to the
 /// <c>PostgresMigrations</c> connection string.
 /// </summary>

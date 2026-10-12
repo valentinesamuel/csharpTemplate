@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1.7
 # Acme.Service Host image (plan P20). Multi-stage: the SDK stage builds, the chiseled runtime stage only runs.
-# No ARG/ENV carries a secret (INV-11); configuration arrives at run time as environment variables or mounted files.
-# The image runs the web app by default. Schema changes are never applied at startup (INV-16): run the same image
-# with `migrate` as the command (compose service `migrate`, Kubernetes Job).
+# No ARG/ENV carries a secret (INV-11); all configuration, secrets included, arrives at run time as environment variables
+# (for example the platform's env var store).
+# The image runs the web app by default and does not migrate (INV-16). Schema changes run through the same image: either the
+# `migrate` command (`dotnet Acme.Service.Host.dll migrate`, a one-shot run) or, opt-in, `Migrations__RunOnStart=true`, which
+# migrates first and starts the web app only if that succeeded.
 # Pin the base images by digest (name:tag@sha256:...) and let Dependabot keep the digests current.
 
 # ---- Stage 1: dependency manifests only, so the restore layer is cached until a csproj/lock file changes ----

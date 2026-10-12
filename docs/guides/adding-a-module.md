@@ -152,6 +152,12 @@ internal static class InvoicesPersistence
 ## 5. Migrations
 
 ```bash
+task db:add MODULE=Invoices NAME=Initial
+```
+
+Without [task](task-commands.md):
+
+```bash
 dotnet ef migrations add Initial \
   --project src/Modules/Invoices/Acme.Service.Modules.Invoices \
   --startup-project src/Host/Acme.Service.Host \
@@ -173,6 +179,14 @@ Add each use case as a folder under `Features/` ([adding a use case](adding-a-us
 ## 8. Migrate and run
 
 ```bash
+task db:migrate:list
+task db:migrate
+task r
+```
+
+Without task:
+
+```bash
 DOTNET_ENVIRONMENT=Development dotnet run --project src/Host/Acme.Service.Host -- migrate --list
 DOTNET_ENVIRONMENT=Development dotnet run --project src/Host/Acme.Service.Host -- migrate
 ```
@@ -182,8 +196,8 @@ DOTNET_ENVIRONMENT=Development dotnet run --project src/Host/Acme.Service.Host -
 ## 9. Tests
 
 1. Create `tests/Acme.Service.Modules.<Name>.Tests/` (here `Acme.Service.Modules.Invoices.Tests`) as an xUnit v3 project shaped like `tests/Acme.Service.Modules.Auth.Tests/Acme.Service.Modules.Auth.Tests.csproj` (`OutputType` `Exe`, the shared test packages, references to the Host, the module and `tests/Acme.Service.Testing/`), and add it to the solution under `/tests/`.
-2. Unit-test the domain and validators; integration-test the endpoints with a `ServiceWebFactory` subclass and a `PostgresFixture` database, marked `[Trait("Category", "Integration")]` ([testing](testing.md)).
-3. Run the architecture tests: `dotnet test Acme.Service.slnx -c Release --filter "FullyQualifiedName~ArchitectureTests"`. They check boundaries, visibility, EF confinement, event names and that the context maps only its own schema.
+2. Unit-test the domain and validators; integration-test the endpoints with a `ServiceWebFactory` subclass and a `PostgresFixture` database, marked `[Trait("Category", "Integration")]` ([testing](testing.md)). Run the new project with `task test:one PROJECT=tests/Acme.Service.Modules.Invoices.Tests` (or `dotnet test tests/Acme.Service.Modules.Invoices.Tests -c Release`).
+3. Run the architecture tests: `task test:arch`, or `dotnet test Acme.Service.slnx -c Release --filter "FullyQualifiedName~ArchitectureTests"`. They check boundaries, visibility, EF confinement, event names and that the context maps only its own schema.
 
 ## Checklist
 

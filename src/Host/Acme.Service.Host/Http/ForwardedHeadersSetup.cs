@@ -7,8 +7,8 @@ namespace Acme.Service.Host.Http;
 
 /// <summary>
 /// Trusts <c>X-Forwarded-For</c>/<c>X-Forwarded-Proto</c> only from the proxies configured under
-/// <c>Http:ForwardedHeaders</c>. When none are configured only loopback is trusted, and a warning is
-/// logged outside Development.
+/// <c>Http:ForwardedHeaders</c>, or from any sender when <c>TrustAllProxies</c> is true. When neither is configured
+/// only loopback is trusted, and a warning is logged outside Development.
 /// </summary>
 internal static partial class ForwardedHeadersSetup
 {
@@ -22,6 +22,15 @@ internal static partial class ForwardedHeadersSetup
                 options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
 
                 var settings = http.Value.ForwardedHeaders;
+                if (settings.TrustAllProxies)
+                {
+                    // Dynamic platform proxies: trust the sender, but honor only the nearest hop (the platform edge).
+                    options.KnownIPNetworks.Clear();
+                    options.KnownProxies.Clear();
+                    options.ForwardLimit = 1;
+                    return;
+                }
+
                 if (settings.KnownNetworks.Count == 0 && settings.KnownProxies.Count == 0)
                 {
                     // Keep the framework defaults (loopback only).
@@ -53,6 +62,7 @@ internal static partial class ForwardedHeadersSetup
         {
             var settings = app.Services.GetRequiredService<IOptions<HttpOptions>>().Value.ForwardedHeaders;
             if (!app.Environment.IsDevelopment()
+                && !settings.TrustAllProxies
                 && settings.KnownNetworks.Count == 0
                 && settings.KnownProxies.Count == 0)
             {

@@ -10,10 +10,10 @@ The service validates all configuration before it serves anything and exits with
 
 - `Blob:Provider is required. Registered providers: AzureBlob, Local, S3.` A category has no provider (the base `appsettings.json` sets none for Blob, Notifications and Jobs).
 - `Notifications:Provider=Console is a development-only provider and is not allowed in the Production environment (D-21).`
-- `Auth:Jwt:SigningKeys must contain exactly one key with Status=Active (found 0).` No key ring: run `dotnet run scripts/dev-env.cs` locally, or check the `acme-service-jwt-keys` Secret and the `Auth__Jwt__SigningKeys__*` ConfigMap entries.
+- `Auth:Jwt:SigningKeys must contain exactly one key with Status=Active (found 0).` No key ring: run `dotnet run scripts/dev-env.cs` locally, or check that `Auth__Jwt__SigningKeys__<n>__PrivateKeyBase64` is set in the service's Render environment, along with the `Auth__Jwt__SigningKeys__*` `Kid`/`Status` values.
 - `Auth:Links:ConfirmEmailUrl is required ...`: the email link URLs must be set in every environment.
 
-Fix the named keys ([configuration](../guides/configuration.md)). In Kubernetes a missing Secret shows as `CreateContainerConfigError` before the process even starts.
+Fix the named keys ([configuration](../guides/configuration.md)). A missing or invalid key shows up as the named options-validation message, and the instance exits non-zero at start before it serves (read the service logs in the Render dashboard, or `docker logs <container>` elsewhere); on Render the previous deploy keeps serving.
 
 ### A verb fails locally with "ConnectionStrings:... is not configured"
 
@@ -28,19 +28,19 @@ Fix the named keys ([configuration](../guides/configuration.md)). In Kubernetes 
    ```bash
    DOTNET_ENVIRONMENT=Development dotnet run --project src/Host/Acme.Service.Host -- migrate --list   # local
    docker compose -f deploy/compose/compose.yaml run --rm migrate migrate --list                       # Compose
-   kubectl logs job/acme-service-migrate -n <ns>                                                        # Kubernetes: did the Job run?
+   docker logs <migration container>                                                                    # deployed: did the one-shot migration run?
    ```
 
-   In Kubernetes, `migrate` and `migrate --list` never run inside the app pods: they need `ConnectionStrings:PostgresMigrations`, which only the migration Job receives. Read the last Job's log as above (it lists every migration it applied), or, to only list pending migrations, apply a copy of `deploy/k8s/migration/base/job.yaml` under another name with `args: ["migrate", "--list"]` through the same overlay.
+   When deployed, `migrate` and `migrate --list` do not run inside the app container: they need `ConnectionStrings:PostgresMigrations`, which only the migrator identity can read. Read the log of the last migration run (it lists every migration it applied), or list pending migrations with a one-shot container as in [deployment](deployment.md#deploy-order) with `migrate --list` as the arguments.
 
-2. Run the migration: locally `migrate`; in Compose `docker compose -f deploy/compose/compose.yaml run --rm migrate`; in Kubernetes the Job, in the apply order of [deployment](deployment.md).
-3. If nothing is pending, check connectivity and credentials of `ConnectionStrings:Postgres` (the PostgreSQL check times out after 5 seconds). `Could not read the migration history.` with a permission error means the application role lacks `USAGE` on a module schema or `SELECT` on its `__ef_migrations_history` table; every pod then stays not ready ([database roles](security-hardening.md#per-schema-database-roles)).
+2. Run the migration: locally `migrate`; in Compose `docker compose -f deploy/compose/compose.yaml run --rm migrate`; deployed, the one-shot migration container, in the order of [deployment](deployment.md#deploy-order).
+3. If nothing is pending, check connectivity and credentials of `ConnectionStrings:Postgres` (the PostgreSQL check times out after 5 seconds). `Could not read the migration history.` with a permission error means the application role lacks `USAGE` on a module schema or `SELECT` on its `__ef_migrations_history` table; every instance then stays not ready ([database roles](security-hardening.md#per-schema-database-roles)).
 
-The pending-migrations result is cached for 30 seconds per pod, the "pending" answer included; only a failure to read the migration history (an exception) is not cached. After `migrate` finishes, readiness can therefore stay 503 for up to 30 seconds plus one probe period (10 seconds in the base manifests) before it turns green. A new pod that is not ready never receives traffic, and with `maxUnavailable: 0` the old pods keep serving.
+The pending-migrations result is cached for 30 seconds per instance, the "pending" answer included; only a failure to read the migration history (an exception) is not cached. After `migrate` finishes, readiness can therefore stay 503 for up to 30 seconds plus one probe period (depending on your health-check interval) before it turns green. A new instance that is not ready should not receive traffic, and a platform that replaces instances gradually keeps the old ones serving.
 
 ## Redis is down: readiness says Degraded
 
-With `Cache:Provider=Redis`, a Redis outage makes the `redis` readiness check `Degraded`. Readiness still returns **200**, so pods stay in rotation (D-20). While Redis is down:
+With `Cache:Provider=Redis`, a Redis outage makes the `redis` readiness check `Degraded`. Readiness still returns **200**, so instances stay in rotation (D-20). While Redis is down:
 
 - cache reads are misses and writes are skipped, with rate-limited warnings; each call waits at most `Cache:Redis:ConnectTimeout` (500 ms), and a circuit breaker opens after repeated failures;
 - requests with an `Idempotency-Key` header fail with 503 `idempotency_unavailable` when `Idempotency:FailMode=Closed` (the default); without the header they work normally;
@@ -102,7 +102,7 @@ The first `migrate` with `Jobs:Provider=Hangfire` creates the `hangfire` schema.
 
 ## Jobs do not run
 
-- **Hangfire schema missing.** The app never creates it. Workers log errors and `IJobQueue` calls fail until a `migrate` with `Jobs:Provider=Hangfire` has run. The migration overlays and the Compose `migrate` service already set it.
+- **Hangfire schema missing.** The app never creates it. Workers log errors and `IJobQueue` calls fail until a `migrate` with `Jobs:Provider=Hangfire` has run. The deployment's migration run and the Compose `migrate` service must set it.
 - **Late jobs.** Scheduled and recurring Hangfire jobs are polled every 15 seconds.
 - **Failed jobs.** Hangfire retries 10 times with increasing delays and then marks the job Failed. The in-memory provider retries 3 times, then logs an Error and drops the job.
 - **Renamed job or payload type.** Persisted Hangfire jobs refer to CLR type names and fail to load after a rename. Drain queues before renaming.
@@ -119,7 +119,7 @@ The first `migrate` with `Jobs:Provider=Hangfire` creates the `hangfire` schema.
 | Response | Usual cause |
 | --- | --- |
 | 401 on every route, including unknown ones | No or invalid access token. Unknown routes are 401 too, because the fallback policy requires authentication before routing can return 404. |
-| 401 with a token that looks valid | Expired (15 minutes), wrong issuer or audience (`Auth:Jwt:Issuer`, `Auth:Jwt:Audience` differ between issuer and validator), a `kid` not in this pod's key ring (rotation done out of order, see [key rotation](key-rotation.md)), an MFA token used as an access token, or clock skew beyond `Auth:Jwt:ClockSkew`. |
+| 401 with a token that looks valid | Expired (15 minutes), wrong issuer or audience (`Auth:Jwt:Issuer`, `Auth:Jwt:Audience` differ between issuer and validator), a `kid` not in this instance's key ring (rotation done out of order, see [key rotation](key-rotation.md)), an MFA token used as an access token, or clock skew beyond `Auth:Jwt:ClockSkew`. |
 | 401 `session_revoked` | The session behind the token was revoked (logout, logout-all, password change or reset, lock) and the endpoint requires a live session. |
 | 403 | The token lacks the required `perm` claim. Permissions are copied into the token at issue time: refresh after a role change, and make sure `migrate` ran after a new permission was added. |
 | 403 `email_not_verified` | Correct password, unconfirmed email. |
@@ -131,15 +131,15 @@ Every problem response carries `traceId` and `correlationId`; search the logs fo
 
 ## All clients share one rate limit, or logs show the proxy's IP
 
-The startup warning `Http:ForwardedHeaders has no KnownNetworks or KnownProxies ...` means `X-Forwarded-For` is trusted from loopback only. Behind an ingress, every request then appears to come from the ingress, so per-IP rate limits apply to everyone at once and client IPs in logs are wrong. Set `Http__ForwardedHeaders__KnownNetworks__0` to the network your ingress or load balancer connects from ([security hardening](security-hardening.md#forwarded-headers)).
+The startup warning `Http:ForwardedHeaders has no KnownNetworks or KnownProxies ...` means `X-Forwarded-For` is trusted from loopback only. Behind a proxy, every request then appears to come from the proxy, so per-IP rate limits apply to everyone at once and client IPs in logs are wrong. Set `Http__ForwardedHeaders__KnownNetworks__0` to the network your reverse proxy or load balancer connects from ([security hardening](security-hardening.md#forwarded-headers)).
 
 ## Debugging the container
 
-The runtime image is chiseled: no shell, no package manager, no curl. Use:
+The runtime image is chiseled: no package manager, no curl, and no general-purpose shell (only the launcher's minimal busybox `sh`). Use:
 
-- `kubectl logs` and the OTLP export for diagnosis;
-- `kubectl debug -it <pod> -n <ns> --image=busybox --target=acme-service` for an ephemeral debugging container in the pod's namespaces; in namespaces enforcing the Pod Security `restricted` profile add `--profile=restricted`, otherwise the ephemeral container is rejected;
-- `kubectl exec <pod> -n <ns> -- dotnet Acme.Service.Host.dll auth:grant-role --email <email> --role <role>` is the only verb that runs in an app pod (it uses `ConnectionStrings:Postgres`); `migrate` and `migrate --list` need the migration Job's connection string (see [readiness returns 503](#readiness-returns-503)), and `kubectl exec` shares the pod's memory limit ([deployment](deployment.md#after-the-first-deployment));
+- the container logs (`docker logs`, or your platform's log view) and the OTLP export for diagnosis;
+- a debugging sidecar or ephemeral container from your platform that shares the app's network and process namespaces, when one is available;
+- `docker compose exec app dotnet Acme.Service.Host.dll auth:grant-role --email <email> --role <role>` (or your platform's equivalent) is the only verb that runs in the app container (it uses `ConnectionStrings:Postgres`); `migrate` and `migrate --list` need the migrator identity's connection string (see [readiness returns 503](#readiness-returns-503)), and `exec` shares the container's memory limit ([deployment](deployment.md#after-the-first-deployment));
 - locally, `docker compose -f deploy/compose/compose.yaml logs -f app` and `docker compose -f deploy/compose/compose.yaml ps` (the `migrate` service should show `Exited (0)`).
 
 ## Port already in use (Compose)

@@ -20,7 +20,6 @@
 - [ ] New packages have a permissive licence and are recorded in the Package Ledger (no MediatR, AutoMapper, FluentAssertions v8+, Moq, MassTransit v9+).
 - [ ] No secrets in code, config, Dockerfile, build args or logs (`.env` stays local; only placeholders in `.env.example`).
 - [ ] Schema changes ship as an EF migration applied by the `migrate` command, never at startup.
-- [ ] Kubernetes manifests still validate (`scripts/ci/validate-k8s.sh`) if `deploy/` changed.
 - [ ] Docs / README updated where behaviour or configuration changed.
 
 ## Testing notes

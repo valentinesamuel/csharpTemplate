@@ -34,7 +34,7 @@ try
     {
         MigrateCommand.Verb => await RunVerbAsync(MigrateCommand.RunAsync, args),
         GrantRoleVerb.Verb => await RunVerbAsync(GrantRoleVerb.RunAsync, args),
-        _ => await RunWebAsync(args),
+        _ => await RunWebAfterOptionalMigrationAsync(args),
     };
 }
 catch (Exception ex) when (ex is OptionsValidationException or AggregateException { InnerExceptions: [OptionsValidationException, ..] })
@@ -62,6 +62,51 @@ static async Task<int> RunVerbAsync(Func<string[], Task<int>> verb, string[] arg
     {
         return await verb(args);
     }
+}
+
+// Opt-in (Migrations:RunOnStart, default false): apply the migrations with the same code path as the `migrate` verb, then start
+// the web app only if that succeeded (INV-16). The web host composition below never migrates. The advisory lock inside
+// `migrate` serialises replicas that start together; a failure exits non-zero before any port is opened.
+static async Task<int> RunWebAfterOptionalMigrationAsync(string[] args)
+{
+    var startup = new ConfigurationBuilder().AddEnvironmentVariables().AddCommandLine(args).Build();
+    if (!startup.GetValue<bool>("Migrations:RunOnStart"))
+    {
+        return await RunWebAsync(args);
+    }
+
+    const string migrationsConnection = "ConnectionStrings__PostgresMigrations";
+
+    // The migrate host takes its environment from DOTNET_ENVIRONMENT; carry over whatever environment the web app was given,
+    // plus any --Section:Key=value overrides, so both hosts see the same configuration.
+    List<string> migrateArgs = [MigrateCommand.Verb, .. args.Where(a => a.StartsWith("--", StringComparison.Ordinal) && a.Contains('=', StringComparison.Ordinal))];
+    var environment = startup["environment"] ?? startup["ASPNETCORE_ENVIRONMENT"] ?? startup["DOTNET_ENVIRONMENT"];
+    if (!string.IsNullOrWhiteSpace(environment) && !migrateArgs.Any(a => a.StartsWith("--environment=", StringComparison.OrdinalIgnoreCase)))
+    {
+        migrateArgs.Add($"--environment={environment}");
+    }
+
+    int exitCode;
+    try
+    {
+        exitCode = await RunVerbAsync(a => MigrateCommand.RunAsync(a), [.. migrateArgs]);
+    }
+    catch (Exception)
+    {
+        // The caller reports the cause (options validation or an unexpected failure) and exits 1; this line says what it means.
+        Log.Error("Migration failed; the web app was not started");
+        throw;
+    }
+
+    if (exitCode != 0)
+    {
+        Log.Fatal("Migration failed (exit code {ExitCode}); the web app was not started", exitCode);
+        return exitCode;
+    }
+
+    // Defence in depth: the running web app does not need the DDL connection string, so keep it out of its configuration.
+    Environment.SetEnvironmentVariable(migrationsConnection, null);
+    return await RunWebAsync(args);
 }
 
 static async Task<int> RunWebAsync(string[] args)
@@ -97,7 +142,7 @@ static async Task<int> RunWebAsync(string[] args)
     // Idempotency-Key filter (P4) for endpoints that opt in with WithIdempotency(); backed by the selected ICache.
     builder.Services.AddIdempotency(builder.Configuration);
 
-    // Modules (§0.6): auth first, then the others. Registration never migrates (INV-16).
+    // Modules (§0.6): auth first, then the others. Registration never migrates (INV-16); only the opt-in start-up step above does.
     builder.AddModules(HostModules.Create());
 
     var app = builder.Build();

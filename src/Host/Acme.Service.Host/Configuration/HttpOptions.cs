@@ -11,6 +11,12 @@ internal sealed class HttpOptions
 
     internal sealed class ForwardedHeadersSettings
     {
+        /// <summary>
+        /// Trusts <c>X-Forwarded-For</c>/<c>X-Forwarded-Proto</c> from any sender, for platforms whose proxy addresses are dynamic
+        /// (Render, Heroku). Only safe when the platform edge is the sole way to reach the app. Overrides the two lists below.
+        /// </summary>
+        public bool TrustAllProxies { get; set; }
+
         /// <summary>Trusted proxy networks in CIDR notation (for example <c>10.0.0.0/8</c>).</summary>
         public ICollection<string> KnownNetworks { get; } = new List<string>();
 

@@ -175,11 +175,14 @@ DOTNET_ENVIRONMENT=Development dotnet run --project src/Host/Acme.Service.Host -
 # Docker Compose
 docker compose -f deploy/compose/compose.yaml run --rm migrate auth:grant-role --email admin@example.com --role Admin
 
-# Kubernetes (the image has no shell; this runs the binary directly in a running pod)
-kubectl exec -n <namespace> deploy/acme-service -- dotnet Acme.Service.Host.dll auth:grant-role --email admin@example.com --role Admin
+# Deployed on Render: a one-off job (or the service's Shell tab) in the service environment; it needs only ConnectionStrings__Postgres
+dotnet Acme.Service.Host.dll auth:grant-role --email admin@example.com --role Admin
+
+# Another Docker host: a one-off container of the same image with the settings as plain environment variables
+docker run --rm --read-only --tmpfs /tmp --env-file <env file> <image> auth:grant-role --email admin@example.com --role Admin
 ```
 
-In Kubernetes, `kubectl exec` runs a second .NET process within the pod's memory limit; on a busy pod prefer a one-off pod or Job ([deployment](../operations/deployment.md#after-the-first-deployment)). Exit codes: 0 when the user has the role afterwards (idempotent), 1 when the user or role does not exist, 2 on invalid usage. The new permissions appear in the next token, so log in again or refresh.
+Run it as a one-off job or container rather than inside a running instance, so it does not share that instance's memory limit ([deployment](../operations/deployment.md)). Exit codes: 0 when the user has the role afterwards (idempotent), 1 when the user or role does not exist, 2 on invalid usage. The new permissions appear in the next token, so log in again or refresh.
 
 ### Admin endpoints
 

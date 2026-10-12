@@ -6,6 +6,8 @@ Every setting the service reads, its environment-variable form, its default and 
 
 `bash scripts/ci/check-config-keys.sh` fails when a key from the reference list kept in that script is missing from this page.
 
+To add a new setting, follow [adding an environment variable](adding-an-environment-variable.md).
+
 ## How configuration is loaded
 
 Sources, later ones winning:
@@ -18,7 +20,7 @@ Sources, later ones winning:
 
 The environment comes from `ASPNETCORE_ENVIRONMENT` for the web app. The two verbs build a plain .NET host, which reads `DOTNET_ENVIRONMENT` (or a `--environment=Development` argument) instead and ignores `ASPNETCORE_ENVIRONMENT`. That matters for local runs: `dotnet run --project src/Host/Acme.Service.Host -- migrate` uses the launch profile, which sets only `ASPNETCORE_ENVIRONMENT`, so the verb runs as `Production` and does not see `appsettings.Development.json` or user secrets. Set `DOTNET_ENVIRONMENT=Development` or pass `--environment=Development` (see [getting started](getting-started.md)).
 
-Rules for secrets (INV-11): never put a secret in an `appsettings*.json` file, a ConfigMap, a build argument or the image. Supply it as an environment variable from a secret store, a mounted file, or (locally) user secrets and the gitignored `deploy/compose/.env`. What goes into which Kubernetes Secret is listed in [secrets](../operations/secrets.md).
+Rules for secrets (INV-11): never put a secret in an `appsettings*.json` file, a deployment manifest, a build argument or the image. Supply it as an environment variable from the platform's environment, a mounted file, or (locally) user secrets and the gitignored `deploy/compose/.env`. When deployed, secrets are `sync: false` environment variables on the Render service, entered once in the dashboard; see [secrets](../operations/secrets.md).
 
 In the tables, **Secret** means the value must come from a secret source. "Sensitive" means it is not a credential by itself but should not be published (for example a user name).
 
@@ -28,6 +30,12 @@ In the tables, **Secret** means the value must come from a secret source. "Sensi
 | --- | --- | --- | --- | --- |
 | `ConnectionStrings:Postgres` | `ConnectionStrings__Postgres` | empty; Development: `Host=localhost;Port=5432;Database=acme_service;Username=postgres` | Yes (contains the password) | Used by the web app for every module context (DML only), by Hangfire storage and by `auth:grant-role`. A missing value fails when a module context is first resolved, and `/health/ready` returns 503. |
 | `ConnectionStrings:PostgresMigrations` | `ConnectionStrings__PostgresMigrations` | empty; Development: same as above | Yes | Used only by `migrate` (all module contexts, the Hangfire schema step and the seeder) and by `dotnet ef` design-time tooling, which reads the environment variable. Give it a role allowed to run DDL. In development both point to the same database. |
+
+## Migrations
+
+| Key | Environment variable | Default | Secret | Notes |
+| --- | --- | --- | --- | --- |
+| `Migrations:RunOnStart` | `Migrations__RunOnStart` | `false` | No | When `true`, the container runs the `migrate` code path first (advisory lock, module migrations, Hangfire schema, Auth seed) and starts the web app only if it succeeded; on failure it exits non-zero before any port opens. Requires `ConnectionStrings:PostgresMigrations`, which is unset in-process afterwards. Set on Render in `render.yaml`; keep `false` locally, where Compose runs the one-shot `migrate` service. |
 
 ## Provider selection
 
@@ -120,8 +128,8 @@ These are code defaults; set a key only to override it.
 | `Auth:Jwt:ClockSkew` | `Auth__Jwt__ClockSkew` | `00:00:30` | No | 0 to 5 minutes. |
 | `Auth:Jwt:SigningKeys:<n>:Kid` | `Auth__Jwt__SigningKeys__<n>__Kid` | none | No | 1 to 64 characters of `A-Z a-z 0-9 . _ -`, unique in the ring. |
 | `Auth:Jwt:SigningKeys:<n>:Status` | `Auth__Jwt__SigningKeys__<n>__Status` | none | No | `Active`, `Next` or `Retiring`. Exactly one key must be `Active`. |
-| `Auth:Jwt:SigningKeys:<n>:PrivateKeyPath` | `Auth__Jwt__SigningKeys__<n>__PrivateKeyPath` | none | The file is | Path of a PEM RSA private key (at least 2048 bits), for example a mounted Kubernetes Secret. Exactly one of `PrivateKeyPath` and `PrivateKeyBase64` per key. |
-| `Auth:Jwt:SigningKeys:<n>:PrivateKeyBase64` | `Auth__Jwt__SigningKeys__<n>__PrivateKeyBase64` | none | Yes | Base64 of the PEM text, for environment variables and user secrets. `scripts/dev-env.cs` generates one. |
+| `Auth:Jwt:SigningKeys:<n>:PrivateKeyPath` | `Auth__Jwt__SigningKeys__<n>__PrivateKeyPath` | none | The file is | Path of a PEM RSA private key (at least 2048 bits), for example a file mounted by the platform. Render has no file mount for this, so deployed keys use `PrivateKeyBase64`. Exactly one of `PrivateKeyPath` and `PrivateKeyBase64` per key. |
+| `Auth:Jwt:SigningKeys:<n>:PrivateKeyBase64` | `Auth__Jwt__SigningKeys__<n>__PrivateKeyBase64` | none | Yes | Base64 of the PEM text, for environment variables (Render environment variables when deployed) and user secrets. `scripts/dev-env.cs` generates one. |
 
 There is no signing key in any `appsettings*.json` file, so the web app does not start until a key ring is configured. Keys are loaded at startup only; rotation is in [key rotation](../operations/key-rotation.md).
 
@@ -175,6 +183,7 @@ Validated only when `Enabled` is true. See [auth](auth.md#external-oidc-login).
 | --- | --- | --- | --- | --- |
 | `Http:ForwardedHeaders:KnownNetworks` | `Http__ForwardedHeaders__KnownNetworks__<n>` | empty | No | Trusted proxy networks in CIDR form (`10.0.0.0/8`). With no networks and no proxies only loopback is trusted, and a warning is logged outside Development. |
 | `Http:ForwardedHeaders:KnownProxies` | `Http__ForwardedHeaders__KnownProxies__<n>` | empty | No | Trusted proxy IP addresses. |
+| `Http:ForwardedHeaders:TrustAllProxies` | `Http__ForwardedHeaders__TrustAllProxies` | `false` | No | Trusts `X-Forwarded-For` and `X-Forwarded-Proto` from any sender, nearest hop only (`ForwardLimit` 1); overrides `KnownNetworks` and `KnownProxies`. Only safe when the platform edge is the only way to reach the service, as on Render (set to `true` in `render.yaml`). Never enable it where clients can reach the service directly: they could spoof their address. |
 | `Observability:ServiceName` | `Observability__ServiceName` | `acme-service` | No | OpenTelemetry `service.name`. Required. |
 | `Observability:Otlp:Endpoint` | `Observability__Otlp__Endpoint` | empty | No | http(s) OTLP endpoint for traces, metrics and logs. Empty disables export. |
 | `Serilog:MinimumLevel:Default` | `Serilog__MinimumLevel__Default` | `Information`; Development: `Debug` | No | Any standard `Serilog:*` setting is honoured. |
@@ -200,4 +209,4 @@ Standard ASP.NET Core settings such as `ASPNETCORE_ENVIRONMENT`, `ASPNETCORE_HTT
 | --- | --- | --- |
 | Local `dotnet run` | `src/Host/Acme.Service.Host/appsettings.Development.json` | User secrets, printed by `dotnet run scripts/dev-env.cs` |
 | Docker Compose | `deploy/compose/compose.yaml` (`environment:`) | `deploy/compose/.env`, generated by `scripts/dev-env.cs` from `deploy/compose/.env.example` |
-| Kubernetes | `deploy/k8s/base/configmap.yaml` and each overlay's `config-patch.yaml` | Secrets created outside the repository ([secrets](../operations/secrets.md)) |
+| Deployed | Plain environment variables set by the deployment platform (the Compose `environment:` block or your platform's equivalent) | `sync: false` environment variables in `render.yaml`, values entered in the Render dashboard ([secrets](../operations/secrets.md#render-environment-variables)) |

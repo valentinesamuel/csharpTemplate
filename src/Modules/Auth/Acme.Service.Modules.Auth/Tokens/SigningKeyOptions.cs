@@ -17,8 +17,8 @@ internal enum SigningKeyStatus
 
 /// <summary>
 /// One entry of <c>Auth:Jwt:SigningKeys</c> (§0.7): <c>{Kid, Status=Active|Next|Retiring, PrivateKeyPath|PrivateKeyBase64}</c>.
-/// Exactly one of <see cref="PrivateKeyPath"/> (a mounted file holding a PEM private key, for example a Kubernetes
-/// Secret) and <see cref="PrivateKeyBase64"/> (the base64 of a PEM private key, for environment variables and
+/// Exactly one of <see cref="PrivateKeyPath"/> (a mounted file holding a PEM private key, for example a secret file
+/// mounted by the container platform) and <see cref="PrivateKeyBase64"/> (the base64 of a PEM private key, for environment variables and
 /// user-secrets) is set. Never logged or echoed (INV-11, INV-28).
 /// </summary>
 internal sealed class SigningKeyOptions

@@ -39,7 +39,7 @@ Keys are loaded at startup only. Rotation, done by configuration plus a rolling 
 3. Wait at least the access-token lifetime plus clock skew.
 4. Remove the old key.
 
-Step 1 must reach all replicas before step 2 starts. Local keys come from `scripts/dev-env.cs`; Kubernetes mounts them from an externally created Secret (`deploy/k8s/base/deployment.yaml`). No key material is committed.
+Step 1 must reach all replicas before step 2 starts. Local keys come from `scripts/dev-env.cs`; when deployed the key is `Auth__Jwt__SigningKeys__<n>__PrivateKeyBase64`, set as a Render environment variable ([secrets](../operations/secrets.md)). No key material is committed.
 
 ## Sessions and refresh tokens
 
@@ -88,13 +88,13 @@ Data Protection keys are stored in `auth.data_protection_keys` and shared by all
 
 - Secrets come only from environment variables, mounted files or a secret store (INV-11). `appsettings*.json` contain none; `deploy/compose/.env.example` contains placeholders only, and the generated `deploy/compose/.env` is gitignored.
 - The single allowlisted exception is the public Azurite development account key used by the local compose stack (`.gitleaks.toml`).
-- Kubernetes Secrets are created outside the repository; no `kind: Secret` is committed.
+- When deployed, secrets are Render environment variables (`sync: false` in `render.yaml`, values entered in the dashboard), not baked into the image or committed; no manifest holding secret values is committed. With `Migrations__RunOnStart=true` the migration runs in the service container, so the DDL connection string is held in the service environment too (the process unsets it after migrating, defence in depth only); the DDL/DML separation is enforced by the PostgreSQL roles ([ADR-0009](../adr/0009-migrations-as-a-separate-job.md)). See [secrets](../operations/secrets.md).
 - Logs never contain passwords, tokens, codes, TOTP secrets, connection-string passwords or `Authorization` headers (INV-28). Request logging records method, path without query string, status and duration only.
 
 ## Runtime hardening
 
 - The container image runs as a non-root user on a chiseled runtime image (`Dockerfile`).
-- Kubernetes pods run with `runAsNonRoot`, a read-only root filesystem, no privilege escalation, all capabilities dropped and the default seccomp profile (`deploy/k8s/base/deployment.yaml`, INV-22).
+- The container runs as a non-root user and supports a read-only root filesystem (`--read-only --tmpfs /tmp`); run it with no privilege escalation and all capabilities dropped (INV-22, [deployment](../operations/deployment.md)).
 - Forwarded headers are trusted only from `Http:ForwardedHeaders:KnownNetworks` and `KnownProxies`; with neither set, only loopback is trusted and a warning is logged.
 - Development-only providers (local blob, console email, in-memory jobs and locks) refuse to start in `Production`.
 

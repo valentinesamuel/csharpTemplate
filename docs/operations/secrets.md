@@ -2,7 +2,7 @@
 
 > Applies to: Acme.Service template
 
-Secrets come only from environment variables, mounted files or a secret store, never from the repository, the image, build arguments or logs (INV-11). No `kind: Secret` object is committed; `scripts/ci/validate-k8s.sh` fails if an overlay renders one, and CI runs gitleaks over the whole history with `.gitleaks.toml`.
+Secrets come only from environment variables or mounted files, never from the repository, the image, build arguments or logs (INV-11). On Render they are environment variables set in the dashboard, and CI runs gitleaks over the whole history with `.gitleaks.toml`.
 
 ## What is a secret
 
@@ -11,7 +11,7 @@ Secrets come only from environment variables, mounted files or a secret store, n
 | `ConnectionStrings__Postgres` | Application database password |
 | `ConnectionStrings__PostgresMigrations` | Migrator (DDL) database password |
 | `Cache__Redis__ConnectionString` | Redis password |
-| `Blob__S3__AccessKey`, `Blob__S3__SecretKey` | S3 or S3-compatible credentials (omit both to use the AWS default credential chain, for example IRSA) |
+| `Blob__S3__AccessKey`, `Blob__S3__SecretKey` | S3 or S3-compatible credentials (omit both to use the AWS default credential chain, for example an instance role) |
 | `Blob__AzureBlob__ConnectionString` | Azure storage account key (or use `Blob__AzureBlob__ServiceUri` with workload identity, which needs no secret) |
 | `Notifications__Smtp__Username`, `Notifications__Smtp__Password` | SMTP relay credentials |
 | The JWT private keys (`Auth__Jwt__SigningKeys__<n>__PrivateKeyPath` files, or `Auth__Jwt__SigningKeys__<n>__PrivateKeyBase64`) | Anyone holding them can mint access tokens |
@@ -19,32 +19,17 @@ Secrets come only from environment variables, mounted files or a secret store, n
 
 Everything else (providers, bucket names, hosts, URLs, lifetimes, the key ids and statuses) is ordinary configuration. The full list is in [configuration](../guides/configuration.md).
 
-## Kubernetes: which Secret holds what
+## Render environment variables
 
-Create the three Secrets per namespace with your secret tooling (External Secrets Operator, Sealed Secrets, Vault, a CSI driver) or, for a first installation, `kubectl`.
+Deployed secrets are plain environment variables on the Render service. `render.yaml` declares each secret as a `sync: false` entry: the Blueprint names the key but holds no value, and Render asks for the value once in the dashboard when the Blueprint is first applied. To share values across several services, put them in a Render environment group instead.
 
-| Secret | Keys | Consumed by |
-| --- | --- | --- |
-| `acme-service-secrets` | `ConnectionStrings__Postgres`, `Cache__Redis__ConnectionString`, `Blob__S3__AccessKey`, `Blob__S3__SecretKey` (or `Blob__AzureBlob__ConnectionString`), `Notifications__Smtp__Username`, `Notifications__Smtp__Password`, optionally `Auth__External__Oidc__ClientSecret` | The app, as environment variables (`envFrom`). The migration Job reads only `ConnectionStrings__Postgres` from it. |
-| `acme-service-jwt-keys` | `signing-key-0.pem` (RSA PEM private key; more files during a rotation) | The app, mounted read-only at `/etc/acme-service/jwt` and referenced by `Auth__Jwt__SigningKeys__<n>__PrivateKeyPath` in the ConfigMap. |
-| `acme-service-migrations-secrets` | `ConnectionStrings__PostgresMigrations` (a role allowed to run DDL) | The migration Job only; never given to the app. |
+- There is no client id, client secret or login step, and nothing goes in GitHub (no repository secret, no workflow variable). The image's only entrypoint is `dotnet Acme.Service.Host.dll`, which reads the environment as given.
+- Configuration is read at startup, so **changing a value requires a redeploy or restart** of the service. Render redeploys when you save an environment variable change; confirm that in the dashboard.
+- With `Migrations__RunOnStart=true` the migration runs inside the service container, so the service environment holds `ConnectionStrings__PostgresMigrations` too ([ADR-0009](../adr/0009-migrations-as-a-separate-job.md), [security hardening](security-hardening.md#per-schema-database-roles)).
+- The key ids and statuses (`Auth__Jwt__SigningKeys__<n>__Kid`, `__Status`) are not secret. Keys that a deployment does not use (for example the S3 keys when using a workload identity) can be left out; the options validation then decides whether the remaining configuration is complete. The code still supports `PrivateKeyPath` for platforms that mount key files.
+- A missing required key stops startup with the key named by the options validation; the new instance never becomes ready and Render keeps the previous one serving.
 
-Keys that a deployment does not use (for example the S3 keys when using workload identity) can be left out of `acme-service-secrets`; the options validation then decides whether the remaining configuration is complete.
-
-Example with placeholders only; prefer `--from-file` or `--from-env-file` with files outside the repository so values never reach shell history:
-
-```bash
-NS=acme-service-prod
-
-kubectl create secret generic acme-service-secrets -n "$NS" --from-env-file=<path-outside-repo>/app-secrets.env
-kubectl create secret generic acme-service-jwt-keys -n "$NS" --from-file=signing-key-0.pem=<path-outside-repo>/signing-key-0.pem
-kubectl create secret generic acme-service-migrations-secrets -n "$NS" \
-  --from-literal=ConnectionStrings__PostgresMigrations='Host=<host>;Port=5432;Database=acme_service;Username=<migrator>;Password=<password>;SSL Mode=Require'
-```
-
-`deploy/k8s/README.md` shows the same commands with `--from-literal` for every key.
-
-A missing Secret or key keeps the pod in `CreateContainerConfigError`; incomplete configuration stops startup with the key named. Neither fails silently.
+Be honest about what this is: the dashboard environment store is not a versioned or audited secrets manager. There is no per-value history, no read-audit trail and no fine-grained access policy beyond who can open the service in your Render workspace. Keep a record of rotations yourself, restrict workspace membership, and move to a dedicated secrets manager if you need those properties.
 
 ## Docker Compose
 
@@ -62,20 +47,20 @@ Use user secrets (stored in your user profile, outside the repository). `scripts
 | --- | --- |
 | JWT signing key | The four-step runbook in [key rotation](key-rotation.md); a rotation never logs users out. |
 | Database passwords | See [database passwords](#database-passwords) below. |
-| Redis, S3, SMTP, OIDC client secret | Update the Secret, roll the deployment, revoke the old credential. Configuration is read at startup, so pods only pick up a new value when they restart. |
+| Redis, S3, SMTP, OIDC client secret | Update the value in the Render dashboard, redeploy the service, revoke the old credential. Configuration is read at startup, so instances only pick up a new value when they restart. |
 
 ### Database passwords
 
-A PostgreSQL role has one password, so changing it in place breaks every pod that still uses the old one. Rotate per role:
+A PostgreSQL role has one password, so changing it in place breaks every instance that still uses the old one. Rotate per role:
 
-- **Application role** (`ConnectionStrings__Postgres` in `acme-service-secrets`, used by the app pods **and** read by the migration Job, see `deploy/k8s/migration/base/job.yaml`): create a second login role with the same rights, switch to it, then drop the old login.
+- **Application role** (`ConnectionStrings__Postgres`, used by the app and by the migration's seeder): create a second login role with the same rights, switch to it, then drop the old login.
 
   ```sql
   CREATE ROLE app_login_2 LOGIN PASSWORD '<new password>' IN ROLE app_user;
   ```
 
-  Update `ConnectionStrings__Postgres` in `acme-service-secrets` to use `app_login_2`, run `kubectl rollout restart deployment/acme-service -n <ns>` and wait for `kubectl rollout status`. When no pod and no running migration Job uses the old login any more, `DROP ROLE app_login_1;`. This works when the rights are granted to a group role (`app_user`) that the login roles are members of ([database roles](security-hardening.md#per-schema-database-roles)); if your rights are granted directly to the login role, grant them to the new role first.
-- **Migrator role** (`ConnectionStrings__PostgresMigrations` in `acme-service-migrations-secrets`, used only by the migration Job): change its password between deployments, when no Job is running (`ALTER ROLE migrator PASSWORD '<new password>';`), then update the Secret before the next Job. Do not switch to a second migrator role: the default privileges are declared `FOR ROLE migrator`, so objects created by another role would not be granted to the application.
+  Update `ConnectionStrings__Postgres` in the Render dashboard to use `app_login_2`, redeploy and wait until all instances are healthy. When no instance and no running migration uses the old login any more, `DROP ROLE app_login_1;`. This works when the rights are granted to a group role (`app_user`) that the login roles are members of ([database roles](security-hardening.md#per-schema-database-roles)); if your rights are granted directly to the login role, grant them to the new role first.
+- **Migrator role** (`ConnectionStrings__PostgresMigrations`, used only by the start-up migration; the process unsets it after migrating): change its password between deployments, when no migration is running (`ALTER ROLE migrator PASSWORD '<new password>';`), then update the value in the Render dashboard before the next deploy. Do not switch to a second migrator role: the default privileges are declared `FOR ROLE migrator`, so objects created by another role would not be granted to the application.
 
 ## Things that are not secrets but are protected
 

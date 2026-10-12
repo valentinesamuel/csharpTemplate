@@ -24,7 +24,7 @@ Rotation is a runbook:
 
 ### Option A: key ring from configuration or a secret store (chosen)
 
-- Pros: cloud-neutral; explicit and reviewable; keys come from mounted Secrets or environment variables; rotation without invalidating live tokens.
+- Pros: cloud-neutral; explicit and reviewable; keys come from environment variables (Render environment variables when deployed) or mounted files; rotation without invalidating live tokens.
 - Cons: rotation is manual; keys load at startup, so each step needs a rolling restart.
 
 ### Option B: keys stored in the database and rotated by the app
@@ -45,7 +45,7 @@ HS256 was rejected because every validator would hold the signing secret. Only R
 
 - Startup fails on a misconfigured ring: no or several `Active` keys, duplicate `Kid`, RSA below 2048 bits, both or neither key source.
 - An unknown or missing `kid` is rejected, never "try all keys".
-- `scripts/dev-env.cs` generates an RSA-3072 key into the gitignored `deploy/compose/.env`; Kubernetes mounts keys from an externally created Secret.
+- `scripts/dev-env.cs` generates an RSA-3072 key into the gitignored `deploy/compose/.env`; when deployed the keys are Render environment variables in the `PrivateKeyBase64` form (`PrivateKeyPath` stays supported for platforms that mount files).
 - A rolling deployment must finish step 1 on all replicas before step 2 starts.
 
 ## Related invariants

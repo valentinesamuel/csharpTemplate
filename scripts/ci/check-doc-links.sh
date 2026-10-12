@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Documentation drift check (plan P24). Fails when a Markdown document points at something that does not exist:
 #   1. relative links and images, inline `[text](target)` and reference definitions `[id]: target`;
-#   2. backticked repository paths, for example `src/Host/Acme.Service.Host/Program.cs` or `deploy/k8s/base/`.
+#   2. backticked repository paths, for example `src/Host/Acme.Service.Host/Program.cs` or `deploy/compose/`.
 # External links (scheme://, mailto:) and pure in-page anchors (#...) are not checked. Fenced code blocks are skipped.
 # A backticked path is checked when it has no whitespace and starts with a top-level repository directory (src/,
 # tests/, docs/, deploy/, scripts/, .github/, .config/) or is one of the root files listed below. Spans containing a
@@ -81,7 +81,7 @@ extract() {
   ' "$1"
 }
 
-root_files=" README.md Dockerfile global.json nuget.config Directory.Build.props Directory.Packages.props Acme.Service.slnx .editorconfig .gitignore .gitattributes .dockerignore .gitleaks.toml .markdownlint.jsonc "
+root_files=" README.md Dockerfile global.json nuget.config Directory.Build.props Directory.Packages.props Acme.Service.slnx .editorconfig .gitignore .gitattributes .dockerignore .gitleaks.toml .markdownlint.jsonc Taskfile.yml "
 
 checked=0
 broken=0

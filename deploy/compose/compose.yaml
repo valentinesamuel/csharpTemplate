@@ -7,7 +7,7 @@
 #
 # Every credential comes from .env (INV-11). The single exception is the Azurite well-known development account key
 # below, which is public (documented by Microsoft), only works against the local emulator and is allowlisted in
-# /.gitleaks.toml. Schema changes happen only in the one-shot `migrate` service (INV-16); the app never migrates.
+# /.gitleaks.toml. Schema changes happen only in the one-shot `migrate` service (INV-16); the app never migrates here (Migrations:RunOnStart stays false).
 # Host ports are bound to 127.0.0.1 and can be moved with the *_PORT variables in .env when they clash.
 name: acme-service
 
@@ -128,7 +128,7 @@ services:
       retries: 20
     restart: unless-stopped
 
-  # One-shot: applies every module's migrations, the Hangfire schema and the Auth seed (INV-16), then exits 0.
+  # One-shot: applies every module's migrations, the Hangfire schema and the Auth seed (the migrate path of INV-16), then exits 0.
   migrate:
     image: acme-service:local
     build: *app-build

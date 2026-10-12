@@ -45,4 +45,4 @@ Keyed DI (`[FromKeyedServices("<module>")]`) was chosen over a generic `IUnitOfW
 
 - INV-06: schema ownership.
 - INV-07: no cross-module transactions.
-- INV-16: schemas change only through `migrate` ([ADR-0009](0009-migrations-as-a-separate-job.md)).
+- INV-16: schemas change only through the migrate path (the `migrate` verb, or the opt-in `Migrations:RunOnStart` step that calls it) ([ADR-0009](0009-migrations-as-a-separate-job.md)).

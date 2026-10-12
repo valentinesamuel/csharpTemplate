@@ -109,7 +109,7 @@ public static class PersistenceExtensions
     /// <summary>
     /// Registers the <see cref="MigrationRunner"/> and switches module contexts to
     /// <c>ConnectionStrings:PostgresMigrations</c> (DDL rights). For the <c>migrate</c> command only; the
-    /// web app never calls this (INV-16).
+    /// web host composition never calls this (INV-16); only the migrate command does.
     /// </summary>
     public static IServiceCollection AddMigrationRunner(this IServiceCollection services)
     {

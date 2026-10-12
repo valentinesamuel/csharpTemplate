@@ -52,7 +52,7 @@ Migrations live in `src/Modules/Auth/Acme.Service.Modules.Auth/Persistence/Migra
 
 ## Configuration
 
-Sections `Auth:Jwt`, `Auth:Identity`, `Auth:RateLimiting`, `Auth:Links`, `Auth:DefaultRole`, `Auth:Mfa` and `Auth:External:Oidc`, all validated at startup. Defaults, environment-variable forms and secrets: [configuration](../../../docs/guides/configuration.md). The signing keys must be supplied per environment (`scripts/dev-env.cs` locally, a mounted Secret in Kubernetes); rotation: [key rotation](../../../docs/operations/key-rotation.md).
+Sections `Auth:Jwt`, `Auth:Identity`, `Auth:RateLimiting`, `Auth:Links`, `Auth:DefaultRole`, `Auth:Mfa` and `Auth:External:Oidc`, all validated at startup. Defaults, environment-variable forms and secrets: [configuration](../../../docs/guides/configuration.md). The signing keys must be supplied per environment (`scripts/dev-env.cs` locally, Render environment variables when deployed); rotation: [key rotation](../../../docs/operations/key-rotation.md).
 
 ## Events and jobs
 
