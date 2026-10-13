@@ -58,7 +58,7 @@
 
   <!-- BuildingBlocks.Infra.Redis: Redis cache provider (P8) -->
   <ItemGroup>
-    <PackageVersion Include="StackExchange.Redis" Version="3.3.1" />
+    <PackageVersion Include="StackExchange.Redis" Version="3.4.5" />
   </ItemGroup>
 
   <!-- BuildingBlocks.Infra.S3 / Infra.AzureBlob: blob providers (P9) -->
